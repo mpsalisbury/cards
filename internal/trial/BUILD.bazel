@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "trial",
+    srcs = ["trial.go"],
+    importpath = "github.com/mpsalisbury/cards/internal/trial",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "trial_test",
+    srcs = ["trial_test.go"],
+    embed = [":trial"],
+)
