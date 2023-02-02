@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cards",
+    srcs = [
+        "card.go",
+        "cards.go",
+        "player.go",
+        "trick.go",
+    ],
+    importpath = "github.com/mpsalisbury/cards/internal/cards",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "cards_test",
+    srcs = [
+        "card_test.go",
+        "cards_test.go",
+    ],
+    embed = [":cards"],
+)

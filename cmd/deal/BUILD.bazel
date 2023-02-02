@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "deal_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/mpsalisbury/cards/cmd/deal",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/cards",
+        "@org_golang_x_exp//slices:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "deal",
+    embed = [":deal_lib"],
+    visibility = ["//visibility:public"],
+)
