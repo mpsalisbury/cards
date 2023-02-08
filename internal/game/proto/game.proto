@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package cards.proto;
+
+option go_package = "/proto";
+
+service CardGameService {
+    rpc Ping(PingRequest) returns (PingResponse);
+    rpc Register(RegisterRequest) returns (RegisterResponse);
+    rpc GetGameState(GameStateRequest) returns (GameStateResponse);
+    rpc PlayerAction(PlayerActionRequest) returns (Status);
+    rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
+}
+
+message RegisterRequest {
+    string name = 1;
+}
+
+message RegisterResponse {
+    // Use this id for all other requests for this session.
+    string session_id = 1;
+}
+
+message GamesStateRequest {
+    string session_id = 1;
+}
+
+message GamesStateResponse {
+    enum GameState {
+        Unknown = 0;
+        Preparing = 1;
+        Playing = 2;
+        Completed = 3;
+        Aborted = 4;
+    }
+    message YourPlayerState {
+        repeated string cards = 1;
+        int32 num_tricks_taken = 2;
+        int32 trick_score = 3;
+    }
+    message OtherPlayerState {
+        int32 num_cards_remaining = 1;
+        int32 num_tricks_taken = 2;
+    }
+    GameState state = 1;
+    YourPlayerState player = 2;
+    repeated OtherPlayerState other_players = 3;
+    repeated string current_trick_cards = 4;
+    string next_player_name = 5;
+}
+
+message PlayCardAction {
+    string session_id = 1;
+    string card = 2;
+}
+
+message PlayerActionRequest {
+    string session_id = 1;
+    oneof type {
+        PlayCardAction play_card = 2;
+    }
+}
+
+message Status {
+    int32 code = 1; // 0 == ok
+    string error = 2; // if code != 0
+}
+
+message GameActivityRequest {
+    string session_id = 1;
+}
+
+message GameActivityResponse {
+    oneof type {
+        GameReadyToStart game_ready_to_start = 1;
+    }
+}
+
+message GameReadyToStart {
+}
+
+message GameStateRequest {
+}
+
+message GameStateResponse {
+}
+
+message PingRequest {
+    string message = 1;
+}
+
+message PingResponse {
+    string message = 1;
+}
+
+// Action reported
+//  Game ready to start
+//  Game started
+//  Player played a card
+//  New player’s turn
+//  Trick was taken
+//  Game is over
+//      Scores
+//  Chat received
+// Action sent
+//  Player ready to start
+//  Play card
+//  Quit/Leave
+//  Send chat
+
