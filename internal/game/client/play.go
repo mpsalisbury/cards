@@ -59,13 +59,14 @@ type Connection interface {
 	Register(ctx context.Context, name string, callbacks GameCallbacks) error
 	JoinGame(ctx context.Context) error
 	GetGameState(ctx context.Context) (GameState, error)
-	PlayCard(ctx context.Context, card string) error
+	PlayCard(ctx context.Context, card cards.Card) error
 }
 
 type GameCallbacks interface {
 	HandlePlayerJoined(name string)
 	HandleGameStarted()
 	HandleYourTurn()
+	HandleGameFinished()
 }
 
 type GameState struct {
@@ -193,6 +194,8 @@ func (c *connection) processActivity(activityStream pb.CardGameService_ListenFor
 			c.callbacks.HandleGameStarted()
 		case *pb.GameActivityResponse_YourTurn:
 			c.callbacks.HandleYourTurn()
+		case *pb.GameActivityResponse_GameFinished:
+			c.callbacks.HandleGameFinished()
 		}
 	}
 }
@@ -255,11 +258,12 @@ func otherPlayerToPlayerState(p *pb.GameStateResponse_OtherPlayerState) PlayerSt
 	}
 }
 
-func (c *connection) PlayCard(ctx context.Context, card string) error {
+func (c *connection) PlayCard(ctx context.Context, card cards.Card) error {
 	req := &pb.PlayerActionRequest{
+		SessionId: c.sessionId,
 		Type: &pb.PlayerActionRequest_PlayCard{
 			PlayCard: &pb.PlayCardAction{
-				Card: card,
+				Card: card.String(),
 			},
 		},
 	}

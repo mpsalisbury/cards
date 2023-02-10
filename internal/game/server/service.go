@@ -44,11 +44,11 @@ const (
 )
 
 type game struct {
-	state             gamePhase
-	players           map[string]*player // Keyed by sessionId
-	playerOrder       []string           // by sessionId
-	currentTrickCards []string
-	nextPlayerId      string // sessionId
+	state           gamePhase
+	players         map[string]*player // Keyed by sessionId
+	playerOrder     []string           // by sessionId
+	currentTrick    cards.Cards
+	nextPlayerIndex int // index into playerOrder
 }
 
 func (g game) acceptingMorePlayers() bool {
@@ -97,7 +97,7 @@ func (g *game) startIfReady() bool {
 		sessionId := g.playerOrder[i]
 		g.players[sessionId].cards = h
 	}
-	g.nextPlayerId = g.playerOrder[rand.Intn(4)]
+	g.nextPlayerIndex = rand.Intn(4)
 	g.state = Playing
 	return true
 }
@@ -128,32 +128,32 @@ func (g game) getGameState(sessionId string) (*pb.GameStateResponse, error) {
 	for _, op := range g.otherPlayers(sessionId) {
 		otherPlayers = append(otherPlayers, g.otherPlayerState(op))
 	}
-	currentTrickCards := g.currentTrickCards
+	currentTrick := g.currentTrick
 
 	gs := &pb.GameStateResponse{
 		State:             state,
 		Player:            player,
 		OtherPlayers:      otherPlayers,
-		CurrentTrickCards: currentTrickCards,
+		CurrentTrickCards: currentTrick.Strings(),
 	}
 	return gs, nil
 }
 
 type player struct {
-	name           string
-	sessionId      string
-	cards          cards.Cards
-	numTricksTaken int
-	trickScore     int
+	name       string
+	sessionId  string
+	cards      cards.Cards
+	tricks     []cards.Cards
+	trickScore int
 }
 
 func (g game) yourPlayerState(p *player) *pb.GameStateResponse_YourPlayerState {
 	return &pb.GameStateResponse_YourPlayerState{
 		Name:           p.name,
 		Cards:          p.cards.Strings(),
-		NumTricksTaken: int32(p.numTricksTaken),
+		NumTricksTaken: int32(len(p.tricks)),
 		TrickScore:     int32(p.trickScore),
-		IsNextPlayer:   p.sessionId == g.nextPlayerId,
+		IsNextPlayer:   p.sessionId == g.playerOrder[g.nextPlayerIndex],
 	}
 }
 
@@ -161,8 +161,8 @@ func (g game) otherPlayerState(p *player) *pb.GameStateResponse_OtherPlayerState
 	return &pb.GameStateResponse_OtherPlayerState{
 		Name:              p.name,
 		NumCardsRemaining: int32(len(p.cards)),
-		NumTricksTaken:    int32(p.numTricksTaken),
-		IsNextPlayer:      p.sessionId == g.nextPlayerId,
+		NumTricksTaken:    int32(len(p.tricks)),
+		IsNextPlayer:      p.sessionId == g.playerOrder[g.nextPlayerIndex],
 	}
 }
 
@@ -210,30 +210,70 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 	return &pb.JoinGameResponse{}, nil
 }
 
-func (s cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameStateResponse, error) {
+func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameStateResponse, error) {
 	sessionId := req.GetSessionId()
 	return s.game.getGameState(sessionId)
 }
 
-func (s cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerActionRequest) (*pb.Status, error) {
+func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerActionRequest) (*pb.Status, error) {
 	switch r := req.Type.(type) {
 	case *pb.PlayerActionRequest_PlayCard:
-		card := r.PlayCard.Card
-		s.reportMessageToAll(fmt.Sprintf("Playing %s", card))
+		sessionId := req.GetSessionId()
+		card, _ := cards.ParseCard(r.PlayCard.GetCard())
+		s.handlePlayCard(sessionId, card)
 	default:
 		return nil, fmt.Errorf("PlayerActionRequest has unexpected type %T", r)
 	}
 	return &pb.Status{Code: 0}, nil
 }
 
+func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) error {
+	log.Printf("handlePlayCard %s %s", sessionId, card)
+	// ensure player has that card
+	// ensure card is a legal play
+	p, ok := s.game.players[sessionId]
+	if !ok {
+		return fmt.Errorf("SessionId %s not found", sessionId)
+	}
+	p.cards = p.cards.Remove(card)
+	s.game.currentTrick = append(s.game.currentTrick, card)
+
+	if len(s.game.currentTrick) < 4 {
+		s.game.nextPlayerIndex = (s.game.nextPlayerIndex + 1) % 4
+		s.reportYourTurn()
+		return nil
+	}
+	// Trick is over.
+	winnerId := s.game.playerOrder[0] //chooseTrickWinner(s.game.currentTrick)
+	winner := s.game.players[winnerId]
+	winner.tricks = append(winner.tricks, s.game.currentTrick)
+	s.game.currentTrick = cards.Cards{}
+	s.game.nextPlayerIndex = 0 // winner index
+
+	// If next player has more cards, keep playing.
+	if len(s.game.players[s.game.playerOrder[s.game.nextPlayerIndex]].cards) > 0 {
+		s.reportYourTurn()
+		return nil
+	}
+
+	// Game is over
+	s.wrapUpGame()
+	return nil
+}
+
+func (s *cardGameService) wrapUpGame() {
+	s.game.state = Completed
+	s.reportGameFinishedToAll()
+}
+
 // Reports message to all clients.
-func (s cardGameService) reportMessageToAll(msg string) {
+func (s *cardGameService) reportMessageToAll(msg string) {
 	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_Msg{Msg: msg},
 		})
 }
-func (s cardGameService) reportPlayerJoinedToAll(name string) {
+func (s *cardGameService) reportPlayerJoinedToAll(name string) {
 	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerJoined{
@@ -241,26 +281,33 @@ func (s cardGameService) reportPlayerJoinedToAll(name string) {
 			},
 		})
 }
-func (s cardGameService) reportGameStartedToAll() {
+func (s *cardGameService) reportGameStartedToAll() {
 	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameStarted{},
 		})
 }
-func (s cardGameService) reportActivityToAll(activity activityReport) {
+func (s *cardGameService) reportGameFinishedToAll() {
+	s.reportActivityToAll(
+		&pb.GameActivityResponse{
+			Type: &pb.GameActivityResponse_GameFinished{},
+		})
+}
+func (s *cardGameService) reportActivityToAll(activity activityReport) {
 	for _, p := range s.playerSessions {
 		if p.ch != nil {
 			p.ch <- activity
 		}
 	}
 }
-func (s cardGameService) reportYourTurn() {
+func (s *cardGameService) reportYourTurn() {
 	g := s.game
 	if g.state != Playing {
 		log.Print("Can't report your turn for game not in state Playing")
 		return
 	}
-	ch := s.playerSessions[g.nextPlayerId].ch
+	pId := s.game.playerOrder[g.nextPlayerIndex]
+	ch := s.playerSessions[pId].ch
 	yourTurn := &pb.GameActivityResponse{
 		Type: &pb.GameActivityResponse_YourTurn{},
 	}

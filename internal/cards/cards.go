@@ -19,15 +19,25 @@ func MakeDeck() Cards {
 	return d
 }
 
-func Sort(d Cards) {
-	sort.Slice(d, func(i, j int) bool {
-		return d[i].LessThan(d[j])
+func (cs Cards) Remove(c Card) Cards {
+	for i, f := range cs {
+		if f == c {
+			copy(cs[i:], cs[i+1:])
+			return cs[:len(cs)-1]
+		}
+	}
+	return cs
+}
+
+func (cs Cards) Sort() {
+	sort.Slice(cs, func(i, j int) bool {
+		return cs[i].LessThan(cs[j])
 	})
 }
 
-func Shuffle(d Cards) {
+func (cs Cards) Shuffle() {
 	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(d), func(i, j int) { d[i], d[j] = d[j], d[i] })
+	rand.Shuffle(len(cs), func(i, j int) { cs[i], cs[j] = cs[j], cs[i] })
 }
 
 func Combine(cardss ...Cards) Cards {
@@ -67,7 +77,7 @@ func (cs Cards) HandString() string {
 	for _, s := range Suits {
 		scs := cbs[s]
 		if len(scs) > 0 {
-			Sort(scs)
+			scs.Sort()
 			suitStrings = append(suitStrings, scs.String())
 		}
 	}
@@ -89,13 +99,13 @@ func ParseCards(cs []string) (Cards, error) {
 func Deal(numHands int) []Cards {
 	hs := make([]Cards, numHands)
 	d := MakeDeck()
-	Shuffle(d)
+	d.Shuffle()
 	for i, c := range d {
 		hi := i % numHands
 		hs[hi] = append(hs[hi], c)
 	}
 	for _, h := range hs {
-		Sort(h)
+		h.Sort()
 	}
 	return hs
 }

@@ -86,7 +86,8 @@ message GameActivityResponse {
         GameReadyToStart game_ready_to_start = 2;
         GameStarted game_started = 3;
         YourTurn your_turn = 4;
-        string msg = 5;
+        GameFinished game_finished = 5;
+        string msg = 6;
     }
 }
 
@@ -98,6 +99,8 @@ message GameReadyToStart {
 message GameStarted {
 }
 message YourTurn {
+}
+message GameFinished {
 }
 
 message PingRequest {
