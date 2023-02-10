@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion7
 type CardGameServiceClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error)
 	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameStateResponse, error)
 	PlayerAction(ctx context.Context, in *PlayerActionRequest, opts ...grpc.CallOption) (*Status, error)
 	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
@@ -49,6 +50,15 @@ func (c *cardGameServiceClient) Ping(ctx context.Context, in *PingRequest, opts 
 func (c *cardGameServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
 	out := new(RegisterResponse)
 	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/Register", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error) {
+	out := new(JoinGameResponse)
+	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/JoinGame", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +121,7 @@ func (x *cardGameServiceListenForGameActivityClient) Recv() (*GameActivityRespon
 type CardGameServiceServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error)
 	GetGameState(context.Context, *GameStateRequest) (*GameStateResponse, error)
 	PlayerAction(context.Context, *PlayerActionRequest) (*Status, error)
 	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
@@ -126,6 +137,9 @@ func (UnimplementedCardGameServiceServer) Ping(context.Context, *PingRequest) (*
 }
 func (UnimplementedCardGameServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Register not implemented")
+}
+func (UnimplementedCardGameServiceServer) JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
 }
 func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameStateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGameState not implemented")
@@ -181,6 +195,24 @@ func _CardGameService_Register_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CardGameServiceServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CardGameService_JoinGame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JoinGameRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CardGameServiceServer).JoinGame(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/cards.proto.CardGameService/JoinGame",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CardGameServiceServer).JoinGame(ctx, req.(*JoinGameRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -256,6 +288,10 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Register",
 			Handler:    _CardGameService_Register_Handler,
+		},
+		{
+			MethodName: "JoinGame",
+			Handler:    _CardGameService_JoinGame_Handler,
 		},
 		{
 			MethodName: "GetGameState",

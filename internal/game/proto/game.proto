@@ -7,6 +7,7 @@ option go_package = "/proto";
 service CardGameService {
     rpc Ping(PingRequest) returns (PingResponse);
     rpc Register(RegisterRequest) returns (RegisterResponse);
+    rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
     rpc GetGameState(GameStateRequest) returns (GameStateResponse);
     rpc PlayerAction(PlayerActionRequest) returns (Status);
     rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
@@ -21,11 +22,18 @@ message RegisterResponse {
     string session_id = 1;
 }
 
-message GamesStateRequest {
+message JoinGameRequest {
     string session_id = 1;
 }
 
-message GamesStateResponse {
+message JoinGameResponse {
+}
+
+message GameStateRequest {
+    string session_id = 1;
+}
+
+message GameStateResponse {
     enum GameState {
         Unknown = 0;
         Preparing = 1;
@@ -34,24 +42,22 @@ message GamesStateResponse {
         Aborted = 4;
     }
     message YourPlayerState {
-        repeated string cards = 1;
-        int32 num_tricks_taken = 2;
-        int32 trick_score = 3;
+        string name = 1;
+        repeated string cards = 2;
+        int32 num_tricks_taken = 3;
+        int32 trick_score = 4;
+        bool is_next_player = 5;
     }
     message OtherPlayerState {
-        int32 num_cards_remaining = 1;
-        int32 num_tricks_taken = 2;
+        string name = 1;
+        int32 num_cards_remaining = 2;
+        int32 num_tricks_taken = 3;
+        bool is_next_player = 4;
     }
     GameState state = 1;
     YourPlayerState player = 2;
     repeated OtherPlayerState other_players = 3;
     repeated string current_trick_cards = 4;
-    string next_player_name = 5;
-}
-
-message PlayCardAction {
-    string session_id = 1;
-    string card = 2;
 }
 
 message PlayerActionRequest {
@@ -59,6 +65,10 @@ message PlayerActionRequest {
     oneof type {
         PlayCardAction play_card = 2;
     }
+}
+
+message PlayCardAction {
+    string card = 2;
 }
 
 message Status {
@@ -72,17 +82,22 @@ message GameActivityRequest {
 
 message GameActivityResponse {
     oneof type {
-        GameReadyToStart game_ready_to_start = 1;
+        PlayerJoined player_joined = 1;
+        GameReadyToStart game_ready_to_start = 2;
+        GameStarted game_started = 3;
+        YourTurn your_turn = 4;
+        string msg = 5;
     }
 }
 
+message PlayerJoined {
+    string name = 1;
+}
 message GameReadyToStart {
 }
-
-message GameStateRequest {
+message GameStarted {
 }
-
-message GameStateResponse {
+message YourTurn {
 }
 
 message PingRequest {
@@ -94,8 +109,10 @@ message PingResponse {
 }
 
 // Action reported
+//  Player joined
 //  Game ready to start
 //  Game started
+//  Your turn
 //  Player played a card
 //  New player’s turn
 //  Trick was taken

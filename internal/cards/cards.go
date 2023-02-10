@@ -48,11 +48,16 @@ func (cs Cards) SplitBySuit() map[Suit]Cards {
 	return cbs
 }
 
-func (cs Cards) String() string {
+func (cs Cards) Strings() []string {
 	cardStrings := []string{}
 	for _, c := range cs {
 		cardStrings = append(cardStrings, c.String())
 	}
+	return cardStrings
+}
+
+func (cs Cards) String() string {
+	cardStrings := cs.Strings()
 	return strings.Join(cardStrings, " ")
 }
 
@@ -67,6 +72,18 @@ func (cs Cards) HandString() string {
 		}
 	}
 	return strings.Join(suitStrings, "   ")
+}
+
+func ParseCards(cs []string) (Cards, error) {
+	var cards Cards
+	for _, c := range cs {
+		card, err := ParseCard(c)
+		if err != nil {
+			return Cards{}, err
+		}
+		cards = append(cards, card)
+	}
+	return cards, nil
 }
 
 func Deal(numHands int) []Cards {
