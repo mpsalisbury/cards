@@ -8,14 +8,16 @@ import (
 
 	"github.com/mpsalisbury/cards/internal/cards"
 	pb "github.com/mpsalisbury/cards/internal/game/proto"
+	"golang.org/x/exp/slices"
 )
 
 func NewCardGameService() pb.CardGameServiceServer {
 	return &cardGameService{
 		playerSessions: make(map[string]*playerSession),
 		game: &game{
-			state:   Preparing,
-			players: make(map[string]*player),
+			state:        Preparing,
+			players:      make(map[string]*player),
+			currentTrick: &trick{},
 		},
 	}
 }
@@ -32,138 +34,6 @@ type playerSession struct {
 	sessionId string
 	name      string
 	ch        chan activityReport
-}
-
-type gamePhase = int8
-
-const (
-	Preparing gamePhase = iota
-	Playing
-	Completed
-	Aborted
-)
-
-type game struct {
-	state           gamePhase
-	players         map[string]*player // Keyed by sessionId
-	playerOrder     []string           // by sessionId
-	currentTrick    cards.Cards
-	nextPlayerIndex int // index into playerOrder
-}
-
-func (g game) acceptingMorePlayers() bool {
-	return len(g.players) < 4
-}
-
-func (g *game) addPlayer(playerSession *playerSession) {
-	sessionId := playerSession.sessionId
-	p := &player{name: playerSession.name, sessionId: playerSession.sessionId}
-	g.players[sessionId] = p
-	g.playerOrder = append(g.playerOrder, sessionId)
-}
-
-// Return other players, starting with the player after sessionId.
-func (g *game) otherPlayers(sessionId string) []*player {
-	var matchingId = -1
-	for i, sid := range g.playerOrder {
-		if sid == sessionId {
-			matchingId = i
-			break
-		}
-	}
-	if matchingId == -1 {
-		return []*player{}
-	}
-	otherPlayers := []*player{}
-	for i := 1; i <= 3; i++ {
-		opIndex := (matchingId + i) % 4
-		op := g.players[g.playerOrder[opIndex]]
-		otherPlayers = append(otherPlayers, op)
-	}
-	return otherPlayers
-}
-
-// Returns true if started.
-func (g *game) startIfReady() bool {
-	if g.state != Preparing {
-		return false
-	}
-	log.Printf("numPlayers: %d", len(g.players))
-	if len(g.players) != 4 {
-		return false
-	}
-	log.Printf("Enough players, initializing game")
-	for i, h := range cards.Deal(4) {
-		sessionId := g.playerOrder[i]
-		g.players[sessionId].cards = h
-	}
-	g.nextPlayerIndex = rand.Intn(4)
-	g.state = Playing
-	return true
-}
-
-func (g game) getGameState(sessionId string) (*pb.GameStateResponse, error) {
-	p, ok := g.players[sessionId]
-	if !ok {
-		return nil, fmt.Errorf("SessionId %s not found", sessionId)
-	}
-	var state pb.GameStateResponse_GameState
-	switch g.state {
-	case Preparing:
-		state = pb.GameStateResponse_Preparing
-	case Playing:
-		state = pb.GameStateResponse_Playing
-	case Completed:
-		state = pb.GameStateResponse_Completed
-	case Aborted:
-		state = pb.GameStateResponse_Aborted
-	default:
-		state = pb.GameStateResponse_Unknown
-	}
-	if g.state != Playing && g.state != Completed {
-		return &pb.GameStateResponse{State: state}, nil
-	}
-	player := g.yourPlayerState(p)
-	otherPlayers := []*pb.GameStateResponse_OtherPlayerState{}
-	for _, op := range g.otherPlayers(sessionId) {
-		otherPlayers = append(otherPlayers, g.otherPlayerState(op))
-	}
-	currentTrick := g.currentTrick
-
-	gs := &pb.GameStateResponse{
-		State:             state,
-		Player:            player,
-		OtherPlayers:      otherPlayers,
-		CurrentTrickCards: currentTrick.Strings(),
-	}
-	return gs, nil
-}
-
-type player struct {
-	name       string
-	sessionId  string
-	cards      cards.Cards
-	tricks     []cards.Cards
-	trickScore int
-}
-
-func (g game) yourPlayerState(p *player) *pb.GameStateResponse_YourPlayerState {
-	return &pb.GameStateResponse_YourPlayerState{
-		Name:           p.name,
-		Cards:          p.cards.Strings(),
-		NumTricksTaken: int32(len(p.tricks)),
-		TrickScore:     int32(p.trickScore),
-		IsNextPlayer:   p.sessionId == g.playerOrder[g.nextPlayerIndex],
-	}
-}
-
-func (g game) otherPlayerState(p *player) *pb.GameStateResponse_OtherPlayerState {
-	return &pb.GameStateResponse_OtherPlayerState{
-		Name:              p.name,
-		NumCardsRemaining: int32(len(p.cards)),
-		NumTricksTaken:    int32(len(p.tricks)),
-		IsNextPlayer:      p.sessionId == g.playerOrder[g.nextPlayerIndex],
-	}
 }
 
 func (cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.PingResponse, error) {
@@ -220,7 +90,10 @@ func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerAction
 	case *pb.PlayerActionRequest_PlayCard:
 		sessionId := req.GetSessionId()
 		card, _ := cards.ParseCard(r.PlayCard.GetCard())
-		s.handlePlayCard(sessionId, card)
+		err := s.handlePlayCard(sessionId, card)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("PlayerActionRequest has unexpected type %T", r)
 	}
@@ -228,27 +101,36 @@ func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerAction
 }
 
 func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) error {
-	log.Printf("handlePlayCard %s %s", sessionId, card)
-	// ensure player has that card
-	// ensure card is a legal play
+	//log.Printf("handlePlayCard %s %s", sessionId, card)
 	p, ok := s.game.players[sessionId]
 	if !ok {
 		return fmt.Errorf("SessionId %s not found", sessionId)
 	}
+	if !slices.Contains(p.cards, card) {
+		return fmt.Errorf("SessionId %s does not contain card %s", sessionId, card)
+	}
+	if !isValidCardForTrick(card, s.game.currentTrick.cards, p.cards, s.game.heartsBroken) {
+		return fmt.Errorf("SessionId %s cannot play card %s", sessionId, card)
+	}
+	if card.Suit == cards.Hearts {
+		s.game.heartsBroken = true
+	}
 	p.cards = p.cards.Remove(card)
-	s.game.currentTrick = append(s.game.currentTrick, card)
+	s.game.currentTrick.addCard(card, sessionId)
+	fmt.Printf("%s - %s\n", card, p.cards.HandString())
 
-	if len(s.game.currentTrick) < 4 {
+	if s.game.currentTrick.size() < 4 {
 		s.game.nextPlayerIndex = (s.game.nextPlayerIndex + 1) % 4
 		s.reportYourTurn()
 		return nil
 	}
 	// Trick is over.
-	winnerId := s.game.playerOrder[0] //chooseTrickWinner(s.game.currentTrick)
+	winningCard, winnerId := s.game.currentTrick.chooseWinner()
 	winner := s.game.players[winnerId]
-	winner.tricks = append(winner.tricks, s.game.currentTrick)
-	s.game.currentTrick = cards.Cards{}
-	s.game.nextPlayerIndex = 0 // winner index
+	fmt.Printf("Trick: %s - winning card %s\n", s.game.currentTrick.cards, winningCard)
+	winner.tricks = append(winner.tricks, s.game.currentTrick.cards)
+	s.game.currentTrick = &trick{}
+	s.game.nextPlayerIndex = slices.Index(s.game.playerOrder, winnerId)
 
 	// If next player has more cards, keep playing.
 	if len(s.game.players[s.game.playerOrder[s.game.nextPlayerIndex]].cards) > 0 {
@@ -259,6 +141,37 @@ func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) erro
 	// Game is over
 	s.wrapUpGame()
 	return nil
+}
+
+func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, heartsBroken bool) bool {
+	// Can play any lead card unless hearts haven't been broken.
+	if len(trick) == 0 {
+		if card.Suit != cards.Hearts {
+			return true
+		}
+		if heartsBroken {
+			return true
+		}
+		// if all cards are hearts, it's okay
+		for _, c := range hand {
+			if c.Suit != cards.Hearts {
+				return false
+			}
+		}
+		return true
+	}
+	leadSuit := trick[0].Suit
+	// If this card matches suit of lead card, we're good.
+	if card.Suit == leadSuit {
+		return true
+	}
+	// Else player must not have any of the lead suit in hand.
+	for _, c := range hand {
+		if c.Suit == leadSuit {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *cardGameService) wrapUpGame() {

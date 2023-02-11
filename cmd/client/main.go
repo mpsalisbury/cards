@@ -83,6 +83,13 @@ func (c callbacks) HandleYourTurn() {
 	if err != nil {
 		log.Fatalf("Couldn't get game state: %v", err)
 	}
-	card := gameState.Players[0].Cards[0]
-	c.client.PlayCard(ctx, card)
+	for _, card := range gameState.Players[0].Cards {
+		log.Printf("Trying card %s", card)
+		err = c.client.PlayCard(ctx, card)
+		if err == nil {
+			log.Printf("  success")
+			// Successful play, we're done.
+			break
+		}
+	}
 }
