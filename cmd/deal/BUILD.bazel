@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//internal/cards",
-        "@org_golang_x_exp//slices:go_default_library",
+        "@org_golang_x_exp//slices",
     ],
 )
 
