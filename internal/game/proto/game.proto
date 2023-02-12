@@ -8,7 +8,7 @@ service CardGameService {
     rpc Ping(PingRequest) returns (PingResponse);
     rpc Register(RegisterRequest) returns (RegisterResponse);
     rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
-    rpc GetGameState(GameStateRequest) returns (GameStateResponse);
+    rpc GetGameState(GameStateRequest) returns (GameState);
     rpc PlayerAction(PlayerActionRequest) returns (Status);
     rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
 }
@@ -23,7 +23,13 @@ message RegisterResponse {
 }
 
 message JoinGameRequest {
+    enum Mode {
+        Unknown = 0;
+        AsPlayer = 1;
+        AsObserver = 2;
+    }
     string session_id = 1;
+    Mode mode = 2;
 }
 
 message JoinGameResponse {
@@ -33,31 +39,29 @@ message GameStateRequest {
     string session_id = 1;
 }
 
-message GameStateResponse {
-    enum GameState {
+message GameState{
+    enum Phase {
         Unknown = 0;
         Preparing = 1;
         Playing = 2;
         Completed = 3;
         Aborted = 4;
     }
-    message YourPlayerState {
+    message Player {
         string name = 1;
-        repeated string cards = 2;
-        int32 num_tricks_taken = 3;
-        int32 trick_score = 4;
-        bool is_next_player = 5;
+        Cards cards = 2;  // not populated for other players
+        int32 num_cards = 3;
+        repeated Cards tricks = 4;  // not populated for other players
+        int32 num_tricks = 5;
+        int32 trick_score = 6;
+        bool is_next_player = 7; // populated only for players
     }
-    message OtherPlayerState {
-        string name = 1;
-        int32 num_cards_remaining = 2;
-        int32 num_tricks_taken = 3;
-        bool is_next_player = 4;
+    message Cards {
+        repeated string cards = 1;
     }
-    GameState state = 1;
-    YourPlayerState player = 2;
-    repeated OtherPlayerState other_players = 3;
-    repeated string current_trick_cards = 4;
+    Phase phase = 1;
+    repeated Player players = 2;
+    Cards current_trick = 3;
 }
 
 message PlayerActionRequest {
@@ -85,22 +89,31 @@ message GameActivityResponse {
         PlayerJoined player_joined = 1;
         GameReadyToStart game_ready_to_start = 2;
         GameStarted game_started = 3;
-        YourTurn your_turn = 4;
-        GameFinished game_finished = 5;
-        string msg = 6;
+        CardPlayed card_played = 4;
+        TrickCompleted trick_completed = 5;
+        // for player listener
+        YourTurn your_turn = 6;
+        GameFinished game_finished = 7;
+        LiveCheck live_check = 8;
+        string broadcast_msg = 9;
     }
-}
-
-message PlayerJoined {
-    string name = 1;
-}
-message GameReadyToStart {
-}
-message GameStarted {
-}
-message YourTurn {
-}
-message GameFinished {
+    message PlayerJoined {
+        string name = 1;
+    }
+    message GameReadyToStart {
+    }
+    message GameStarted {
+    }
+    message CardPlayed {
+    }
+    message TrickCompleted {
+    }
+    message YourTurn {
+    }
+    message GameFinished {
+    }
+    message LiveCheck {
+    }
 }
 
 message PingRequest {
@@ -117,10 +130,8 @@ message PingResponse {
 //  Game started
 //  Your turn
 //  Player played a card
-//  New player’s turn
 //  Trick was taken
 //  Game is over
-//      Scores
 //  Chat received
 // Action sent
 //  Player ready to start

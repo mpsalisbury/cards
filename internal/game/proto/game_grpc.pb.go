@@ -25,7 +25,7 @@ type CardGameServiceClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error)
-	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameStateResponse, error)
+	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error)
 	PlayerAction(ctx context.Context, in *PlayerActionRequest, opts ...grpc.CallOption) (*Status, error)
 	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
 }
@@ -65,8 +65,8 @@ func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameReques
 	return out, nil
 }
 
-func (c *cardGameServiceClient) GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameStateResponse, error) {
-	out := new(GameStateResponse)
+func (c *cardGameServiceClient) GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error) {
+	out := new(GameState)
 	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/GetGameState", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ type CardGameServiceServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error)
-	GetGameState(context.Context, *GameStateRequest) (*GameStateResponse, error)
+	GetGameState(context.Context, *GameStateRequest) (*GameState, error)
 	PlayerAction(context.Context, *PlayerActionRequest) (*Status, error)
 	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
 	mustEmbedUnimplementedCardGameServiceServer()
@@ -141,7 +141,7 @@ func (UnimplementedCardGameServiceServer) Register(context.Context, *RegisterReq
 func (UnimplementedCardGameServiceServer) JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
 }
-func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameStateResponse, error) {
+func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGameState not implemented")
 }
 func (UnimplementedCardGameServiceServer) PlayerAction(context.Context, *PlayerActionRequest) (*Status, error) {

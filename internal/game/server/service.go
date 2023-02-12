@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"time"
 
 	"github.com/mpsalisbury/cards/internal/cards"
 	pb "github.com/mpsalisbury/cards/internal/game/proto"
@@ -12,28 +13,44 @@ import (
 )
 
 func NewCardGameService() pb.CardGameServiceServer {
-	return &cardGameService{
-		playerSessions: make(map[string]*playerSession),
+	cgs := &cardGameService{
+		sessions: make(map[string]*session),
 		game: &game{
-			state:        Preparing,
+			phase:        Preparing,
 			players:      make(map[string]*player),
 			currentTrick: &trick{},
 		},
 	}
+	cgs.init()
+	return cgs
 }
 
 type cardGameService struct {
 	pb.UnimplementedCardGameServiceServer
-	playerSessions map[string]*playerSession // Keyed by sessionId
-	game           *game
+	sessions   map[string]*session // Keyed by sessionId
+	game       *game
+	pingTicker *time.Ticker
 }
 
 type activityReport = *pb.GameActivityResponse
 
-type playerSession struct {
-	sessionId string
-	name      string
-	ch        chan activityReport
+type session struct {
+	id   string
+	name string
+	ch   chan activityReport
+}
+
+func (s *cardGameService) init() {
+	s.pingTicker = time.NewTicker(10 * time.Second)
+	go func() {
+		for range s.pingTicker.C {
+			s.pingLiveCheck()
+		}
+	}()
+}
+
+func (s *cardGameService) Close() {
+	s.pingTicker.Stop()
 }
 
 func (cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.PingResponse, error) {
@@ -45,7 +62,7 @@ func (s *cardGameService) newSessionId() string {
 	for {
 		id := fmt.Sprintf("s%08d", rand.Int31n(100000000))
 		// Ensure no collision with existing session id.
-		if _, found := s.playerSessions[id]; !found {
+		if _, found := s.sessions[id]; !found {
 			return id
 		}
 	}
@@ -54,34 +71,40 @@ func (s *cardGameService) newSessionId() string {
 func (s *cardGameService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
 	name := req.GetName()
 	sessionId := s.newSessionId()
-	p := &playerSession{
-		sessionId: sessionId,
-		name:      name,
+	p := &session{
+		id:   sessionId,
+		name: name,
 	}
-	s.playerSessions[sessionId] = p
+	s.sessions[sessionId] = p
 	return &pb.RegisterResponse{SessionId: sessionId}, nil
 }
 
 func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest) (*pb.JoinGameResponse, error) {
 	sessionId := req.GetSessionId()
-	playerSession, ok := s.playerSessions[sessionId]
+	session, ok := s.sessions[sessionId]
 	if !ok {
 		return nil, fmt.Errorf("SessionId %s not found", sessionId)
 	}
-	if !s.game.acceptingMorePlayers() {
-		return nil, fmt.Errorf("game is full")
-	}
-	s.game.addPlayer(playerSession)
-	s.reportPlayerJoinedToAll(playerSession.name)
-	if s.game.startIfReady() {
-		s.reportGameStartedToAll()
-		s.reportYourTurn()
+	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
+		if !s.game.acceptingMorePlayers() {
+			return nil, fmt.Errorf("game is full")
+		}
+		s.game.addPlayer(session)
+		s.reportPlayerJoined(session.name)
+		if s.game.startIfReady() {
+			s.reportGameStarted()
+			s.reportYourTurn()
+		}
 	}
 	return &pb.JoinGameResponse{}, nil
 }
 
-func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameStateResponse, error) {
+func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameState, error) {
 	sessionId := req.GetSessionId()
+	_, ok := s.sessions[sessionId]
+	if !ok {
+		return nil, fmt.Errorf("SessionId %s not found", sessionId)
+	}
 	return s.game.getGameState(sessionId)
 }
 
@@ -117,6 +140,7 @@ func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) erro
 	}
 	p.cards = p.cards.Remove(card)
 	s.game.currentTrick.addCard(card, sessionId)
+	s.reportCardPlayed()
 	fmt.Printf("%s - %s\n", card, p.cards.HandString())
 
 	if s.game.currentTrick.size() < 4 {
@@ -131,6 +155,7 @@ func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) erro
 	winner.tricks = append(winner.tricks, s.game.currentTrick.cards)
 	s.game.currentTrick = &trick{}
 	s.game.nextPlayerIndex = slices.Index(s.game.playerOrder, winnerId)
+	s.reportTrickCompleted()
 
 	// If next player has more cards, keep playing.
 	if len(s.game.players[s.game.playerOrder[s.game.nextPlayerIndex]].cards) > 0 {
@@ -175,39 +200,57 @@ func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, h
 }
 
 func (s *cardGameService) wrapUpGame() {
-	s.game.state = Completed
-	s.reportGameFinishedToAll()
+	s.game.phase = Completed
+	s.reportGameFinished()
 }
 
-// Reports message to all clients.
-func (s *cardGameService) reportMessageToAll(msg string) {
-	s.reportActivityToAll(
+// Broadcasts message to all clients.
+func (s *cardGameService) broadcastMessage(msg string) {
+	s.reportActivity(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_Msg{Msg: msg},
+			Type: &pb.GameActivityResponse_BroadcastMsg{BroadcastMsg: msg},
 		})
 }
-func (s *cardGameService) reportPlayerJoinedToAll(name string) {
-	s.reportActivityToAll(
+func (s *cardGameService) reportPlayerJoined(name string) {
+	s.reportActivity(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_PlayerJoined{
-				PlayerJoined: &pb.PlayerJoined{Name: name},
+			Type: &pb.GameActivityResponse_PlayerJoined_{
+				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name},
 			},
 		})
 }
-func (s *cardGameService) reportGameStartedToAll() {
-	s.reportActivityToAll(
+func (s *cardGameService) reportGameStarted() {
+	s.reportActivity(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_GameStarted{},
+			Type: &pb.GameActivityResponse_GameStarted_{},
 		})
 }
-func (s *cardGameService) reportGameFinishedToAll() {
-	s.reportActivityToAll(
+func (s *cardGameService) reportCardPlayed() {
+	s.reportActivity(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_GameFinished{},
+			Type: &pb.GameActivityResponse_CardPlayed_{},
 		})
 }
-func (s *cardGameService) reportActivityToAll(activity activityReport) {
-	for _, p := range s.playerSessions {
+func (s *cardGameService) reportTrickCompleted() {
+	s.reportActivity(
+		&pb.GameActivityResponse{
+			Type: &pb.GameActivityResponse_TrickCompleted_{},
+		})
+}
+func (s *cardGameService) reportGameFinished() {
+	s.reportActivity(
+		&pb.GameActivityResponse{
+			Type: &pb.GameActivityResponse_GameFinished_{},
+		})
+}
+func (s *cardGameService) pingLiveCheck() {
+	s.reportActivity(
+		&pb.GameActivityResponse{
+			Type: &pb.GameActivityResponse_LiveCheck_{},
+		})
+}
+func (s *cardGameService) reportActivity(activity activityReport) {
+	for _, p := range s.sessions {
 		if p.ch != nil {
 			p.ch <- activity
 		}
@@ -215,26 +258,26 @@ func (s *cardGameService) reportActivityToAll(activity activityReport) {
 }
 func (s *cardGameService) reportYourTurn() {
 	g := s.game
-	if g.state != Playing {
+	if g.phase != Playing {
 		log.Print("Can't report your turn for game not in state Playing")
 		return
 	}
 	pId := s.game.playerOrder[g.nextPlayerIndex]
-	ch := s.playerSessions[pId].ch
+	ch := s.sessions[pId].ch
 	yourTurn := &pb.GameActivityResponse{
-		Type: &pb.GameActivityResponse_YourTurn{},
+		Type: &pb.GameActivityResponse_YourTurn_{},
 	}
 	ch <- yourTurn
 }
 
 func (s *cardGameService) ListenForGameActivity(request *pb.GameActivityRequest, server pb.CardGameService_ListenForGameActivityServer) error {
 	sessionId := request.GetSessionId()
-	log.Printf("ListenForGameActivity from %s - %s\n", sessionId, s.playerSessions[sessionId].name)
+	log.Printf("ListenForGameActivity from %s - %s\n", sessionId, s.sessions[sessionId].name)
 	ch := make(chan activityReport)
-	s.playerSessions[sessionId].ch = ch
+	s.sessions[sessionId].ch = ch
 	reportActivity(ch, server)
 	close(ch)
-	s.playerSessions[sessionId].ch = nil
+	s.sessions[sessionId].ch = nil
 	log.Printf("Closing connection from %s\n", sessionId)
 	return nil
 }
