@@ -13,7 +13,7 @@ import (
 )
 
 func NewCardGameService() pb.CardGameServiceServer {
-	cgs := &cardGameService{
+	return &cardGameService{
 		sessions: make(map[string]*session),
 		game: &game{
 			phase:        Preparing,
@@ -21,8 +21,6 @@ func NewCardGameService() pb.CardGameServiceServer {
 			currentTrick: &trick{},
 		},
 	}
-	cgs.init()
-	return cgs
 }
 
 type cardGameService struct {
@@ -40,19 +38,6 @@ type session struct {
 	ch   chan activityReport
 }
 
-func (s *cardGameService) init() {
-	s.pingTicker = time.NewTicker(10 * time.Second)
-	go func() {
-		for range s.pingTicker.C {
-			s.pingLiveCheck()
-		}
-	}()
-}
-
-func (s *cardGameService) Close() {
-	s.pingTicker.Stop()
-}
-
 func (cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.PingResponse, error) {
 	log.Printf("Got ping %s", request.GetMessage())
 	return &pb.PingResponse{Message: "Pong"}, nil
@@ -67,15 +52,32 @@ func (s *cardGameService) newSessionId() string {
 		}
 	}
 }
-
-func (s *cardGameService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	name := req.GetName()
+func (s *cardGameService) addSession(name string) string {
 	sessionId := s.newSessionId()
 	p := &session{
 		id:   sessionId,
 		name: name,
 	}
 	s.sessions[sessionId] = p
+	return sessionId
+}
+func (s *cardGameService) removeSession(sessionId string) {
+	log.Printf("Closing session %s\n", sessionId)
+	delete(s.sessions, sessionId)
+	err := s.game.removePlayer(sessionId)
+	if err != nil {
+		// Can't remove player, abort game
+		s.game.phase = Aborted
+		s.reportGameAborted()
+		s.scheduleGameRemoved()
+	}
+}
+func (s *cardGameService) scheduleGameRemoved() {
+	// TODO: When we support multiple games, clean this game up after time (1 minute?)
+}
+
+func (s *cardGameService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	sessionId := s.addSession(req.GetName())
 	return &pb.RegisterResponse{SessionId: sessionId}, nil
 }
 
@@ -202,6 +204,7 @@ func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, h
 func (s *cardGameService) wrapUpGame() {
 	s.game.phase = Completed
 	s.reportGameFinished()
+	s.scheduleGameRemoved()
 }
 
 // Broadcasts message to all clients.
@@ -243,10 +246,10 @@ func (s *cardGameService) reportGameFinished() {
 			Type: &pb.GameActivityResponse_GameFinished_{},
 		})
 }
-func (s *cardGameService) pingLiveCheck() {
+func (s *cardGameService) reportGameAborted() {
 	s.reportActivity(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_LiveCheck_{},
+			Type: &pb.GameActivityResponse_GameAborted_{},
 		})
 }
 func (s *cardGameService) reportActivity(activity activityReport) {
@@ -270,24 +273,31 @@ func (s *cardGameService) reportYourTurn() {
 	ch <- yourTurn
 }
 
-func (s *cardGameService) ListenForGameActivity(request *pb.GameActivityRequest, server pb.CardGameService_ListenForGameActivityServer) error {
-	sessionId := request.GetSessionId()
+func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, resp pb.CardGameService_ListenForGameActivityServer) error {
+	sessionId := req.GetSessionId()
 	log.Printf("ListenForGameActivity from %s - %s\n", sessionId, s.sessions[sessionId].name)
 	ch := make(chan activityReport)
 	s.sessions[sessionId].ch = ch
-	reportActivity(ch, server)
+	err := reportActivity(ch, resp)
 	close(ch)
-	s.sessions[sessionId].ch = nil
-	log.Printf("Closing connection from %s\n", sessionId)
-	return nil
+	s.removeSession(sessionId)
+	return err
 }
 
-func reportActivity(c chan activityReport, server pb.CardGameService_ListenForGameActivityServer) {
-	for activity := range c {
-		err := server.Send(activity)
-		if err != nil {
-			log.Printf("Error sending message: %v", err)
-			break
+func reportActivity(activityCh chan activityReport, server pb.CardGameService_ListenForGameActivityServer) error {
+	for {
+		select {
+		case activity := <-activityCh:
+			err := server.Send(activity)
+			if err != nil {
+				return err
+			}
+			if _, isFinished := activity.Type.(*pb.GameActivityResponse_GameFinished_); isFinished {
+				// Game is over. Close this reporting request.
+				return nil
+			}
+		case <-server.Context().Done():
+			return server.Context().Err()
 		}
 	}
 }

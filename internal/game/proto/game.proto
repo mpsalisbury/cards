@@ -94,7 +94,7 @@ message GameActivityResponse {
         // for player listener
         YourTurn your_turn = 6;
         GameFinished game_finished = 7;
-        LiveCheck live_check = 8;
+        GameAborted game_aborted = 8;
         string broadcast_msg = 9;
     }
     message PlayerJoined {
@@ -112,7 +112,7 @@ message GameActivityResponse {
     }
     message GameFinished {
     }
-    message LiveCheck {
+    message GameAborted {
     }
 }
 

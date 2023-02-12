@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 
@@ -61,6 +62,30 @@ func (g *game) addPlayer(session *session) {
 	p := &player{name: session.name, sessionId: session.id}
 	g.players[session.id] = p
 	g.playerOrder = append(g.playerOrder, session.id)
+}
+func (g *game) containsPlayer(sessionId string) bool {
+	_, ok := g.players[sessionId]
+	return ok
+}
+
+// Remove player if present
+func (g *game) removePlayer(sessionId string) error {
+	if !g.containsPlayer(sessionId) {
+		return nil
+	}
+	if g.phase != Preparing {
+		return fmt.Errorf("can't remove player from game in Preparing phase.")
+	}
+	delete(g.players, sessionId)
+	for i, s := range g.playerOrder {
+		if s == sessionId {
+			l := len(g.playerOrder)
+			copy(g.playerOrder[i:], g.playerOrder[i+1:])
+			g.playerOrder = g.playerOrder[:l-1]
+			break
+		}
+	}
+	return nil
 }
 
 // Return all players, starting with sessionId and following in order.

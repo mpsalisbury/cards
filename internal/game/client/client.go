@@ -70,6 +70,8 @@ type GameCallbacks interface {
 	HandleYourTurn()
 	HandleTrickCompleted( /*trick cards.Cards, trickWinner string*/ )
 	HandleGameFinished()
+	HandleGameAborted()
+	HandleConnectionError(err error)
 }
 type UnimplementedGameCallbacks struct{}
 
@@ -79,6 +81,8 @@ func (UnimplementedGameCallbacks) HandleCardPlayed()              {}
 func (UnimplementedGameCallbacks) HandleYourTurn()                {}
 func (UnimplementedGameCallbacks) HandleTrickCompleted()          {}
 func (UnimplementedGameCallbacks) HandleGameFinished()            {}
+func (UnimplementedGameCallbacks) HandleGameAborted()             {}
+func (UnimplementedGameCallbacks) HandleConnectionError(error)    {}
 
 type GameState struct {
 	Phase        GamePhase
@@ -205,10 +209,22 @@ func (c *connection) JoinGame(ctx context.Context, mode pb.JoinGameRequest_Mode)
 	return nil
 }
 
+// possible conn closed errors.
+const possibleConnResetMsg = "connection reset by peer"
+const possibleEOFMsg = "error reading from server: EOF"
+
+// isConnClosedErr checks the error msg for possible conn closed messages.
+func isConnClosedErr(err error) bool {
+	errContainsConnResetMsg := strings.Contains(err.Error(), possibleConnResetMsg)
+	errContainsEOFMsg := strings.Contains(err.Error(), possibleEOFMsg)
+	return errContainsConnResetMsg || errContainsEOFMsg || err == io.EOF
+}
+
 func (c *connection) processActivity(activityStream pb.CardGameService_ListenForGameActivityClient) {
 	for {
 		activity, err := activityStream.Recv()
-		if err == io.EOF {
+		if err != nil && isConnClosedErr(err) {
+			c.callbacks.HandleConnectionError(fmt.Errorf("Connection to server closed"))
 			break
 		}
 		if err != nil {
@@ -224,8 +240,8 @@ func (c *connection) processActivity(activityStream pb.CardGameService_ListenFor
 			c.callbacks.HandleYourTurn()
 		case *pb.GameActivityResponse_GameFinished_:
 			c.callbacks.HandleGameFinished()
-		case *pb.GameActivityResponse_LiveCheck_:
-			// Do nothing. This is just to make sure we're still alive.
+		case *pb.GameActivityResponse_GameAborted_:
+			c.callbacks.HandleGameAborted()
 		}
 	}
 }

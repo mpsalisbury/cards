@@ -59,13 +59,25 @@ func (c callbacks) HandleGameStarted() {
 	fmt.Printf("%v\n", gameState)
 }
 func (c callbacks) HandleGameFinished() {
+	fmt.Printf("Game over\n")
+	c.showGameState()
+	c.wg.Done()
+}
+func (c callbacks) HandleGameAborted() {
+	fmt.Printf("Game aborted\n")
+	c.showGameState()
+	c.wg.Done()
+}
+func (c callbacks) HandleConnectionError(err error) {
+	fmt.Printf("Connection error: %v\n", err)
+	c.wg.Done()
+}
+func (c callbacks) showGameState() {
 	gameState, err := c.client.GetGameState(context.Background())
 	if err != nil {
 		log.Fatalf("Couldn't get game state: %v", err)
 	}
-	fmt.Printf("Game over\n")
 	fmt.Printf("%v\n", gameState)
-	c.wg.Done()
 }
 
 func (c callbacks) HandleTrickCompleted() {
