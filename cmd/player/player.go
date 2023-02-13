@@ -13,11 +13,8 @@ import (
 )
 
 var (
-//	logger     = log.New(os.Stdout, "", 0)
-//	serverAddr = flag.String("server", "api.cards.salisburyclan.com:443", "Server address (host:port)")
-// Raw server: "cards-api-5g5wrbokbq-uw.a.run.app:443"
-//	insecure  = flag.Bool("insecure", false, "Use insecure connection to server")
-//	local     = flag.Bool("local", false, "Override serverAddr and insecure connection for local server")
+	gameId  = flag.String("game", "", "Game to join")
+	joinAny = flag.Bool("joinany", false, "Join any available game")
 )
 
 func init() {
@@ -25,29 +22,71 @@ func init() {
 }
 func main() {
 	flag.Parse()
-
+	err := RunPlayer()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+func RunPlayer() error {
+	conn, err := client.Connect(client.LocalServer)
+	if err != nil {
+		return fmt.Errorf("couldn't connect to server: %v", err)
+	}
+	if *gameId == "" {
+		if *joinAny {
+			*gameId, err = chooseGame(conn)
+			if err != nil {
+				return err
+			}
+		} else {
+			return showGames(conn)
+		}
+	}
+	ctx := context.Background()
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	ctx := context.Background()
-	client, err := client.Connect(client.LocalServer)
-	if err != nil {
-		log.Fatalf("Couldn't connect to server: %v", err)
-	}
 	name := fmt.Sprintf("Henry%04d", rand.Intn(10000))
-	err = client.Register(ctx, name, callbacks{client: client, wg: wg})
+	err = conn.Register(ctx, name, callbacks{client: conn, wg: wg})
 	if err != nil {
-		log.Fatalf("Couldn't register with server: %v", err)
+		return fmt.Errorf("couldn't register with server: %v", err)
 	}
-	err = client.JoinGameAsPlayer(ctx)
+	err = conn.JoinGameAsPlayer(ctx, *gameId)
 	if err != nil {
-		log.Fatalf("Couldn't join game: %v", err)
+		return fmt.Errorf("couldn't join game: %v", err)
 	}
-	gameState, err := client.GetGameState(ctx)
+	gameState, err := conn.GetGameState(ctx)
 	if err != nil {
-		log.Fatalf("Couldn't get game state: %v", err)
+		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	fmt.Printf("%v\n", gameState)
 	wg.Wait()
+	return nil
+}
+
+func showGames(conn client.Connection) error {
+	ctx := context.Background()
+	games, err := conn.ListGames(ctx, client.Preparing)
+	if err != nil {
+		return fmt.Errorf("couldn't list games: %v", err)
+	}
+	fmt.Printf("Available games\n")
+	for _, g := range games {
+		fmt.Printf("%s - %s %s\n", g.Id, g.Phase, g.Names)
+	}
+	return nil
+}
+func chooseGame(conn client.Connection) (string, error) {
+	ctx := context.Background()
+	games, err := conn.ListGames(ctx, client.Preparing)
+	if err != nil {
+		return "", fmt.Errorf("couldn't list games: %v", err)
+	}
+	// Choose first game that's available.
+	if len(games) > 0 {
+		return games[0].Id, nil
+	}
+	// Empty gameId will create a new game.
+	return "", nil
 }
 
 // client.GameCallbacks
@@ -57,25 +96,29 @@ type callbacks struct {
 	wg     *sync.WaitGroup
 }
 
-func (callbacks) HandlePlayerJoined(name string) {
-	fmt.Printf("Player joined: %s\n", name)
+func (callbacks) HandlePlayerJoined(name string, gameId string) error {
+	fmt.Printf("Player %s joined game %s\n", name, gameId)
+	return nil
 }
-func (c callbacks) HandleGameStarted() {
+func (c callbacks) HandleGameStarted() error {
 	gameState, err := c.client.GetGameState(context.Background())
 	if err != nil {
-		log.Fatalf("Couldn't get game state: %v", err)
+		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	fmt.Printf("%v\n", gameState)
+	return nil
 }
-func (c callbacks) HandleGameFinished() {
+func (c callbacks) HandleGameFinished() error {
 	fmt.Printf("Game over\n")
 	c.showGameState()
 	c.wg.Done()
+	return nil
 }
-func (c callbacks) HandleGameAborted() {
+func (c callbacks) HandleGameAborted() error {
 	fmt.Printf("Game aborted\n")
 	c.showGameState()
 	c.wg.Done()
+	return nil
 }
 func (c callbacks) HandleConnectionError(err error) {
 	fmt.Printf("Connection error: %v\n", err)
@@ -89,12 +132,12 @@ func (c callbacks) showGameState() {
 	fmt.Printf("%v\n", gameState)
 }
 
-func (c callbacks) HandleYourTurn() {
+func (c callbacks) HandleYourTurn() error {
 	ctx := context.Background()
 	log.Println("Performing turn")
 	gameState, err := c.client.GetGameState(ctx)
 	if err != nil {
-		log.Fatalf("Couldn't get game state: %v", err)
+		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	for _, card := range gameState.Players[0].Cards {
 		log.Printf("Trying card %s", card)
@@ -105,4 +148,5 @@ func (c callbacks) HandleYourTurn() {
 			break
 		}
 	}
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 )
 
 type game struct {
+	id              string
 	phase           gamePhase
 	players         map[string]*player // Keyed by sessionId
 	playerOrder     []string           // by sessionId
@@ -18,7 +19,7 @@ type game struct {
 	heartsBroken    bool
 }
 
-type gamePhase = int8
+type gamePhase int8
 
 const (
 	Preparing gamePhase = iota
@@ -112,7 +113,7 @@ func (g *game) startIfReady() bool {
 	if g.phase != Preparing {
 		return false
 	}
-	log.Printf("numPlayers: %d", len(g.players))
+	log.Printf("Game %s - numPlayers %d", g.id, len(g.players))
 	if len(g.players) != 4 {
 		return false
 	}
@@ -126,21 +127,24 @@ func (g *game) startIfReady() bool {
 	return true
 }
 
+func phaseToProto(phase gamePhase) pb.GameState_Phase {
+	switch phase {
+	case Preparing:
+		return pb.GameState_Preparing
+	case Playing:
+		return pb.GameState_Playing
+	case Completed:
+		return pb.GameState_Completed
+	case Aborted:
+		return pb.GameState_Aborted
+	default:
+		return pb.GameState_Unknown
+	}
+}
+
 func (g game) getGameState(sessionId string) (*pb.GameState, error) {
 	_, requesterIsPlayer := g.players[sessionId]
-	var phase pb.GameState_Phase
-	switch g.phase {
-	case Preparing:
-		phase = pb.GameState_Preparing
-	case Playing:
-		phase = pb.GameState_Playing
-	case Completed:
-		phase = pb.GameState_Completed
-	case Aborted:
-		phase = pb.GameState_Aborted
-	default:
-		phase = pb.GameState_Unknown
-	}
+	phase := phaseToProto(g.phase)
 	if g.phase != Playing && g.phase != Completed {
 		return &pb.GameState{Phase: phase}, nil
 	}

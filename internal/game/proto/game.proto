@@ -7,6 +7,7 @@ option go_package = "/proto";
 service CardGameService {
     rpc Ping(PingRequest) returns (PingResponse);
     rpc Register(RegisterRequest) returns (RegisterResponse);
+    rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
     rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
     rpc GetGameState(GameStateRequest) returns (GameState);
     rpc PlayerAction(PlayerActionRequest) returns (Status);
@@ -18,8 +19,23 @@ message RegisterRequest {
 }
 
 message RegisterResponse {
+    // The is for the created session.
     // Use this id for all other requests for this session.
     string session_id = 1;
+}
+
+message ListGamesRequest {
+    // Any of these phases. If no phase is listed, any phase is okay.
+    repeated GameState.Phase phase = 1;
+}
+
+message ListGamesResponse {
+    message GameSummary {
+        string id = 1;
+        GameState.Phase phase = 2;
+        repeated string player_names = 3;
+    }
+    repeated GameSummary games = 1;
 }
 
 message JoinGameRequest {
@@ -29,7 +45,8 @@ message JoinGameRequest {
         AsObserver = 2;
     }
     string session_id = 1;
-    Mode mode = 2;
+    string game_id = 2;
+    Mode mode = 3;
 }
 
 message JoinGameResponse {
@@ -99,6 +116,7 @@ message GameActivityResponse {
     }
     message PlayerJoined {
         string name = 1;
+        string game_id = 2;
     }
     message GameReadyToStart {
     }

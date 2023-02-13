@@ -15,27 +15,24 @@ import (
 func NewCardGameService() pb.CardGameServiceServer {
 	return &cardGameService{
 		sessions: make(map[string]*session),
-		game: &game{
-			phase:        Preparing,
-			players:      make(map[string]*player),
-			currentTrick: &trick{},
-		},
+		games:    make(map[string]*game),
 	}
 }
 
 type cardGameService struct {
 	pb.UnimplementedCardGameServiceServer
 	sessions   map[string]*session // Keyed by sessionId
-	game       *game
+	games      map[string]*game    // Keyed by gameId
 	pingTicker *time.Ticker
 }
 
 type activityReport = *pb.GameActivityResponse
 
 type session struct {
-	id   string
-	name string
-	ch   chan activityReport
+	id     string
+	name   string
+	gameId string
+	ch     chan activityReport
 }
 
 func (cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.PingResponse, error) {
@@ -45,7 +42,7 @@ func (cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.P
 
 func (s *cardGameService) newSessionId() string {
 	for {
-		id := fmt.Sprintf("s%08d", rand.Int31n(100000000))
+		id := fmt.Sprintf("s%04d", rand.Int31n(10000))
 		// Ensure no collision with existing session id.
 		if _, found := s.sessions[id]; !found {
 			return id
@@ -54,22 +51,46 @@ func (s *cardGameService) newSessionId() string {
 }
 func (s *cardGameService) addSession(name string) string {
 	sessionId := s.newSessionId()
-	p := &session{
+	sess := &session{
 		id:   sessionId,
 		name: name,
 	}
-	s.sessions[sessionId] = p
+	s.sessions[sessionId] = sess
 	return sessionId
 }
+
+func (s *cardGameService) newGameId() string {
+	for {
+		id := fmt.Sprintf("g%04d", rand.Int31n(10000))
+		// Ensure no collision with existing game id.
+		if _, found := s.games[id]; !found {
+			return id
+		}
+	}
+}
+func (s *cardGameService) addGame() *game {
+	gameId := s.newGameId()
+	g := &game{
+		id:           gameId,
+		phase:        Preparing,
+		players:      make(map[string]*player),
+		currentTrick: &trick{},
+	}
+	s.games[gameId] = g
+	return g
+}
+
 func (s *cardGameService) removeSession(sessionId string) {
 	log.Printf("Closing session %s\n", sessionId)
 	delete(s.sessions, sessionId)
-	err := s.game.removePlayer(sessionId)
-	if err != nil {
-		// Can't remove player, abort game
-		s.game.phase = Aborted
-		s.reportGameAborted()
-		s.scheduleGameRemoved()
+	if game, found := s.games[sessionId]; found {
+		err := game.removePlayer(sessionId)
+		if err != nil {
+			// Can't remove player, abort game
+			game.phase = Aborted
+			s.reportGameAborted()
+			s.scheduleGameRemoved()
+		}
 	}
 }
 func (s *cardGameService) scheduleGameRemoved() {
@@ -80,22 +101,69 @@ func (s *cardGameService) Register(ctx context.Context, req *pb.RegisterRequest)
 	sessionId := s.addSession(req.GetName())
 	return &pb.RegisterResponse{SessionId: sessionId}, nil
 }
+func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesRequest) (*pb.ListGamesResponse, error) {
+	filter := makeGameFilter(req.GetPhase())
+	var games []*pb.ListGamesResponse_GameSummary
+	for _, g := range s.games {
+		if filter(g) {
+			names := []string{}
+			for _, p := range g.players {
+				names = append(names, p.name)
+			}
+			games = append(games, &pb.ListGamesResponse_GameSummary{
+				Id:          g.id,
+				Phase:       phaseToProto(g.phase),
+				PlayerNames: names,
+			})
+		}
+	}
+	return &pb.ListGamesResponse{
+		Games: games,
+	}, nil
+}
+
+// Builds filter that accepts only games with one of the given phases (or any phase if no phases listed).
+func makeGameFilter(phases []pb.GameState_Phase) func(*game) bool {
+	return func(g *game) bool {
+		if len(phases) == 0 {
+			return true
+		}
+		for _, ph := range phases {
+			if phaseToProto(g.phase) == ph {
+				return true
+			}
+		}
+		return false
+	}
+}
 
 func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest) (*pb.JoinGameResponse, error) {
 	sessionId := req.GetSessionId()
+	gameId := req.GetGameId()
 	session, ok := s.sessions[sessionId]
 	if !ok {
 		return nil, fmt.Errorf("SessionId %s not found", sessionId)
 	}
-	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
-		if !s.game.acceptingMorePlayers() {
-			return nil, fmt.Errorf("game is full")
+	var game *game
+	if gameId == "" {
+		game = s.addGame()
+		gameId = game.id
+	} else {
+		game, ok = s.games[gameId]
+		if !ok {
+			return nil, fmt.Errorf("game %s not found", gameId)
 		}
-		s.game.addPlayer(session)
-		s.reportPlayerJoined(session.name)
-		if s.game.startIfReady() {
+	}
+	session.gameId = gameId
+	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
+		if !game.acceptingMorePlayers() {
+			return nil, fmt.Errorf("game %s is full", gameId)
+		}
+		game.addPlayer(session)
+		s.reportPlayerJoined(session.name, gameId)
+		if game.startIfReady() {
 			s.reportGameStarted()
-			s.reportYourTurn()
+			s.reportYourTurn(game)
 		}
 	}
 	return &pb.JoinGameResponse{}, nil
@@ -103,11 +171,15 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 
 func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameState, error) {
 	sessionId := req.GetSessionId()
-	_, ok := s.sessions[sessionId]
-	if !ok {
-		return nil, fmt.Errorf("SessionId %s not found", sessionId)
+	session, found := s.sessions[sessionId]
+	if !found {
+		return nil, fmt.Errorf("no session found for SessionId %s", sessionId)
 	}
-	return s.game.getGameState(sessionId)
+	game, found := s.games[session.gameId]
+	if !found {
+		return nil, fmt.Errorf("no game found for SessionId %s : %s", sessionId, session.gameId)
+	}
+	return game.getGameState(sessionId)
 }
 
 func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerActionRequest) (*pb.Status, error) {
@@ -126,47 +198,50 @@ func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerAction
 }
 
 func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) error {
-	//log.Printf("handlePlayCard %s %s", sessionId, card)
-	p, ok := s.game.players[sessionId]
+	game, found := s.games[sessionId]
+	if !found {
+		return fmt.Errorf("no game found for SessionId %s", sessionId)
+	}
+	p, ok := game.players[sessionId]
 	if !ok {
 		return fmt.Errorf("SessionId %s not found", sessionId)
 	}
 	if !slices.Contains(p.cards, card) {
 		return fmt.Errorf("SessionId %s does not contain card %s", sessionId, card)
 	}
-	if !isValidCardForTrick(card, s.game.currentTrick.cards, p.cards, s.game.heartsBroken) {
+	if !isValidCardForTrick(card, game.currentTrick.cards, p.cards, game.heartsBroken) {
 		return fmt.Errorf("SessionId %s cannot play card %s", sessionId, card)
 	}
 	if card.Suit == cards.Hearts {
-		s.game.heartsBroken = true
+		game.heartsBroken = true
 	}
 	p.cards = p.cards.Remove(card)
-	s.game.currentTrick.addCard(card, sessionId)
+	game.currentTrick.addCard(card, sessionId)
 	s.reportCardPlayed()
 	fmt.Printf("%s - %s\n", card, p.cards.HandString())
 
-	if s.game.currentTrick.size() < 4 {
-		s.game.nextPlayerIndex = (s.game.nextPlayerIndex + 1) % 4
-		s.reportYourTurn()
+	if game.currentTrick.size() < 4 {
+		game.nextPlayerIndex = (game.nextPlayerIndex + 1) % 4
+		s.reportYourTurn(game)
 		return nil
 	}
 	// Trick is over.
-	winningCard, winnerId := s.game.currentTrick.chooseWinner()
-	winner := s.game.players[winnerId]
-	fmt.Printf("Trick: %s - winning card %s\n", s.game.currentTrick.cards, winningCard)
-	winner.tricks = append(winner.tricks, s.game.currentTrick.cards)
-	s.game.currentTrick = &trick{}
-	s.game.nextPlayerIndex = slices.Index(s.game.playerOrder, winnerId)
+	winningCard, winnerId := game.currentTrick.chooseWinner()
+	winner := game.players[winnerId]
+	fmt.Printf("Trick: %s - winning card %s\n", game.currentTrick.cards, winningCard)
+	winner.tricks = append(winner.tricks, game.currentTrick.cards)
+	game.currentTrick = &trick{}
+	game.nextPlayerIndex = slices.Index(game.playerOrder, winnerId)
 	s.reportTrickCompleted()
 
 	// If next player has more cards, keep playing.
-	if len(s.game.players[s.game.playerOrder[s.game.nextPlayerIndex]].cards) > 0 {
-		s.reportYourTurn()
+	if len(game.players[game.playerOrder[game.nextPlayerIndex]].cards) > 0 {
+		s.reportYourTurn(game)
 		return nil
 	}
 
 	// Game is over
-	s.wrapUpGame()
+	s.wrapUpGame(game)
 	return nil
 }
 
@@ -201,8 +276,8 @@ func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, h
 	return true
 }
 
-func (s *cardGameService) wrapUpGame() {
-	s.game.phase = Completed
+func (s *cardGameService) wrapUpGame(game *game) {
+	game.phase = Completed
 	s.reportGameFinished()
 	s.scheduleGameRemoved()
 }
@@ -214,11 +289,11 @@ func (s *cardGameService) broadcastMessage(msg string) {
 			Type: &pb.GameActivityResponse_BroadcastMsg{BroadcastMsg: msg},
 		})
 }
-func (s *cardGameService) reportPlayerJoined(name string) {
+func (s *cardGameService) reportPlayerJoined(name string, gameId string) {
 	s.reportActivity(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerJoined_{
-				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name},
+				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: gameId},
 			},
 		})
 }
@@ -259,13 +334,12 @@ func (s *cardGameService) reportActivity(activity activityReport) {
 		}
 	}
 }
-func (s *cardGameService) reportYourTurn() {
-	g := s.game
-	if g.phase != Playing {
+func (s *cardGameService) reportYourTurn(game *game) {
+	if game.phase != Playing {
 		log.Print("Can't report your turn for game not in state Playing")
 		return
 	}
-	pId := s.game.playerOrder[g.nextPlayerIndex]
+	pId := game.playerOrder[game.nextPlayerIndex]
 	ch := s.sessions[pId].ch
 	yourTurn := &pb.GameActivityResponse{
 		Type: &pb.GameActivityResponse_YourTurn_{},

@@ -57,32 +57,33 @@ func Connect(stype ServerType) (Connection, error) {
 type Connection interface {
 	Close()
 	Register(ctx context.Context, name string, callbacks GameCallbacks) error
-	JoinGameAsPlayer(ctx context.Context) error
-	JoinGameAsObserver(ctx context.Context) error
+	ListGames(ctx context.Context, phase GamePhase) ([]GameSummary, error)
+	JoinGameAsPlayer(ctx context.Context, gameId string) error
+	JoinGameAsObserver(ctx context.Context, gameId string) error
 	GetGameState(ctx context.Context) (GameState, error)
 	PlayCard(ctx context.Context, card cards.Card) error
 }
 
 type GameCallbacks interface {
-	HandlePlayerJoined(name string)
-	HandleGameStarted()
-	HandleCardPlayed( /*currentTrick cards.Cards*/ )
-	HandleYourTurn()
-	HandleTrickCompleted( /*trick cards.Cards, trickWinner string*/ )
-	HandleGameFinished()
-	HandleGameAborted()
+	HandlePlayerJoined(name string, gameId string) error
+	HandleGameStarted() error
+	HandleCardPlayed( /*currentTrick cards.Cards*/ ) error
+	HandleYourTurn() error
+	HandleTrickCompleted( /*trick cards.Cards, trickWinner string*/ ) error
+	HandleGameFinished() error
+	HandleGameAborted() error
 	HandleConnectionError(err error)
 }
 type UnimplementedGameCallbacks struct{}
 
-func (UnimplementedGameCallbacks) HandlePlayerJoined(name string) {}
-func (UnimplementedGameCallbacks) HandleGameStarted()             {}
-func (UnimplementedGameCallbacks) HandleCardPlayed()              {}
-func (UnimplementedGameCallbacks) HandleYourTurn()                {}
-func (UnimplementedGameCallbacks) HandleTrickCompleted()          {}
-func (UnimplementedGameCallbacks) HandleGameFinished()            {}
-func (UnimplementedGameCallbacks) HandleGameAborted()             {}
-func (UnimplementedGameCallbacks) HandleConnectionError(error)    {}
+func (UnimplementedGameCallbacks) HandlePlayerJoined(name string, gameId string) error { return nil }
+func (UnimplementedGameCallbacks) HandleGameStarted() error                            { return nil }
+func (UnimplementedGameCallbacks) HandleCardPlayed() error                             { return nil }
+func (UnimplementedGameCallbacks) HandleYourTurn() error                               { return nil }
+func (UnimplementedGameCallbacks) HandleTrickCompleted() error                         { return nil }
+func (UnimplementedGameCallbacks) HandleGameFinished() error                           { return nil }
+func (UnimplementedGameCallbacks) HandleGameAborted() error                            { return nil }
+func (UnimplementedGameCallbacks) HandleConnectionError(error)                         {}
 
 type GameState struct {
 	Phase        GamePhase
@@ -111,6 +112,36 @@ func (gp GamePhase) String() string {
 		return "Aborted"
 	}
 	return "unknown"
+}
+
+func (gp GamePhase) toProto() pb.GameState_Phase {
+	switch gp {
+	case Preparing:
+		return pb.GameState_Preparing
+	case Playing:
+		return pb.GameState_Playing
+	case Completed:
+		return pb.GameState_Completed
+	case Aborted:
+		return pb.GameState_Aborted
+	default:
+		return pb.GameState_Unknown
+	}
+}
+
+func protoToPhase(phase pb.GameState_Phase) GamePhase {
+	switch phase {
+	case pb.GameState_Preparing:
+		return Preparing
+	case pb.GameState_Playing:
+		return Playing
+	case pb.GameState_Completed:
+		return Completed
+	case pb.GameState_Aborted:
+		return Aborted
+	default:
+		panic("Unknown phase")
+	}
 }
 
 type PlayerState struct {
@@ -182,15 +213,42 @@ func (c *connection) Register(ctx context.Context, name string, callbacks GameCa
 	return nil
 }
 
-func (c *connection) JoinGameAsPlayer(ctx context.Context) error {
-	return c.JoinGame(ctx, pb.JoinGameRequest_AsPlayer)
+type GameSummary struct {
+	Id    string
+	Phase GamePhase
+	Names []string
 }
-func (c *connection) JoinGameAsObserver(ctx context.Context) error {
-	return c.JoinGame(ctx, pb.JoinGameRequest_AsObserver)
+
+func (c *connection) ListGames(ctx context.Context, phase GamePhase) ([]GameSummary, error) {
+	req := &pb.ListGamesRequest{
+		Phase: []pb.GameState_Phase{phase.toProto()},
+	}
+	resp, err := c.client.ListGames(ctx, req)
+	if err != nil {
+		return []GameSummary{}, err
+	}
+	games := []GameSummary{}
+	for _, g := range resp.GetGames() {
+		games = append(games,
+			GameSummary{
+				Id:    g.GetId(),
+				Phase: protoToPhase(g.GetPhase()),
+				Names: g.GetPlayerNames(),
+			})
+	}
+	return games, nil
 }
-func (c *connection) JoinGame(ctx context.Context, mode pb.JoinGameRequest_Mode) error {
+
+func (c *connection) JoinGameAsPlayer(ctx context.Context, gameId string) error {
+	return c.JoinGame(ctx, gameId, pb.JoinGameRequest_AsPlayer)
+}
+func (c *connection) JoinGameAsObserver(ctx context.Context, gameId string) error {
+	return c.JoinGame(ctx, gameId, pb.JoinGameRequest_AsObserver)
+}
+func (c *connection) JoinGame(ctx context.Context, gameId string, mode pb.JoinGameRequest_Mode) error {
 	joinReq := &pb.JoinGameRequest{
 		SessionId: c.sessionId,
+		GameId:    gameId,
 		Mode:      mode,
 	}
 	_, err := c.client.JoinGame(ctx, joinReq)
@@ -233,15 +291,20 @@ func (c *connection) processActivity(activityStream pb.CardGameService_ListenFor
 		log.Println(activity)
 		switch a := activity.Type.(type) {
 		case *pb.GameActivityResponse_PlayerJoined_:
-			c.callbacks.HandlePlayerJoined(a.PlayerJoined.GetName())
+			pj := a.PlayerJoined
+			err = c.callbacks.HandlePlayerJoined(pj.GetName(), pj.GetGameId())
 		case *pb.GameActivityResponse_GameStarted_:
-			c.callbacks.HandleGameStarted()
+			err = c.callbacks.HandleGameStarted()
 		case *pb.GameActivityResponse_YourTurn_:
-			c.callbacks.HandleYourTurn()
+			err = c.callbacks.HandleYourTurn()
 		case *pb.GameActivityResponse_GameFinished_:
-			c.callbacks.HandleGameFinished()
+			err = c.callbacks.HandleGameFinished()
 		case *pb.GameActivityResponse_GameAborted_:
-			c.callbacks.HandleGameAborted()
+			err = c.callbacks.HandleGameAborted()
+		}
+		if err != nil {
+			log.Printf("Error handling activity: %v\n", err)
+			break
 		}
 	}
 }
