@@ -80,18 +80,25 @@ func (s *cardGameService) addGame() *game {
 	return g
 }
 
-func (s *cardGameService) removeSession(sessionId string) {
+func (s *cardGameService) removeSession(sessionId string) error {
 	log.Printf("Closing session %s\n", sessionId)
+	session, ok := s.sessions[sessionId]
+	if !ok {
+		return fmt.Errorf("can't find session %s", sessionId)
+	}
 	delete(s.sessions, sessionId)
-	if game, found := s.games[sessionId]; found {
+	if game, found := s.games[session.gameId]; found {
 		err := game.removePlayer(sessionId)
 		if err != nil {
 			// Can't remove player, abort game
 			game.phase = Aborted
 			s.reportGameAborted()
 			s.scheduleGameRemoved()
+		} else {
+			s.reportPlayerLeft(sessionId, game.id)
 		}
 	}
+	return nil
 }
 func (s *cardGameService) scheduleGameRemoved() {
 	// TODO: When we support multiple games, clean this game up after time (1 minute?)
@@ -198,13 +205,17 @@ func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerAction
 }
 
 func (s *cardGameService) handlePlayCard(sessionId string, card cards.Card) error {
-	game, found := s.games[sessionId]
+	session, found := s.sessions[sessionId]
 	if !found {
-		return fmt.Errorf("no game found for SessionId %s", sessionId)
+		return fmt.Errorf("SessionId %s not found", sessionId)
+	}
+	game, found := s.games[session.gameId]
+	if !found {
+		return fmt.Errorf("no game %s found for SessionId %s", session.gameId, sessionId)
 	}
 	p, ok := game.players[sessionId]
 	if !ok {
-		return fmt.Errorf("SessionId %s not found", sessionId)
+		return fmt.Errorf("player not found for game %s in SessionId %s", session.gameId, sessionId)
 	}
 	if !slices.Contains(p.cards, card) {
 		return fmt.Errorf("SessionId %s does not contain card %s", sessionId, card)
@@ -294,6 +305,14 @@ func (s *cardGameService) reportPlayerJoined(name string, gameId string) {
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerJoined_{
 				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: gameId},
+			},
+		})
+}
+func (s *cardGameService) reportPlayerLeft(name string, gameId string) {
+	s.reportActivity(
+		&pb.GameActivityResponse{
+			Type: &pb.GameActivityResponse_PlayerLeft_{
+				PlayerLeft: &pb.GameActivityResponse_PlayerLeft{Name: name, GameId: gameId},
 			},
 		})
 }

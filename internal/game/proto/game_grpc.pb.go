@@ -26,6 +26,7 @@ type CardGameServiceClient interface {
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	ListGames(ctx context.Context, in *ListGamesRequest, opts ...grpc.CallOption) (*ListGamesResponse, error)
 	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error)
+	LeaveGame(ctx context.Context, in *LeaveGameRequest, opts ...grpc.CallOption) (*LeaveGameResponse, error)
 	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error)
 	PlayerAction(ctx context.Context, in *PlayerActionRequest, opts ...grpc.CallOption) (*Status, error)
 	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
@@ -69,6 +70,15 @@ func (c *cardGameServiceClient) ListGames(ctx context.Context, in *ListGamesRequ
 func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error) {
 	out := new(JoinGameResponse)
 	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/JoinGame", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cardGameServiceClient) LeaveGame(ctx context.Context, in *LeaveGameRequest, opts ...grpc.CallOption) (*LeaveGameResponse, error) {
+	out := new(LeaveGameResponse)
+	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/LeaveGame", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +143,7 @@ type CardGameServiceServer interface {
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	ListGames(context.Context, *ListGamesRequest) (*ListGamesResponse, error)
 	JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error)
+	LeaveGame(context.Context, *LeaveGameRequest) (*LeaveGameResponse, error)
 	GetGameState(context.Context, *GameStateRequest) (*GameState, error)
 	PlayerAction(context.Context, *PlayerActionRequest) (*Status, error)
 	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
@@ -154,6 +165,9 @@ func (UnimplementedCardGameServiceServer) ListGames(context.Context, *ListGamesR
 }
 func (UnimplementedCardGameServiceServer) JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
+}
+func (UnimplementedCardGameServiceServer) LeaveGame(context.Context, *LeaveGameRequest) (*LeaveGameResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LeaveGame not implemented")
 }
 func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGameState not implemented")
@@ -249,6 +263,24 @@ func _CardGameService_JoinGame_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CardGameService_LeaveGame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LeaveGameRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CardGameServiceServer).LeaveGame(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/cards.proto.CardGameService/LeaveGame",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CardGameServiceServer).LeaveGame(ctx, req.(*LeaveGameRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CardGameService_GetGameState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GameStateRequest)
 	if err := dec(in); err != nil {
@@ -328,6 +360,10 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JoinGame",
 			Handler:    _CardGameService_JoinGame_Handler,
+		},
+		{
+			MethodName: "LeaveGame",
+			Handler:    _CardGameService_LeaveGame_Handler,
 		},
 		{
 			MethodName: "GetGameState",

@@ -9,6 +9,7 @@ service CardGameService {
     rpc Register(RegisterRequest) returns (RegisterResponse);
     rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
     rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
+    rpc LeaveGame(LeaveGameRequest) returns (LeaveGameResponse);
     rpc GetGameState(GameStateRequest) returns (GameState);
     rpc PlayerAction(PlayerActionRequest) returns (Status);
     rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
@@ -50,6 +51,14 @@ message JoinGameRequest {
 }
 
 message JoinGameResponse {
+}
+
+message LeaveGameRequest {
+    string session_id = 1;
+    string game_id = 2;
+}
+
+message LeaveGameResponse {
 }
 
 message GameStateRequest {
@@ -104,17 +113,22 @@ message GameActivityRequest {
 message GameActivityResponse {
     oneof type {
         PlayerJoined player_joined = 1;
-        GameReadyToStart game_ready_to_start = 2;
-        GameStarted game_started = 3;
-        CardPlayed card_played = 4;
-        TrickCompleted trick_completed = 5;
+        PlayerLeft player_left = 2;
+        GameReadyToStart game_ready_to_start = 3;
+        GameStarted game_started = 4;
+        CardPlayed card_played = 5;
+        TrickCompleted trick_completed = 6;
         // for player listener
-        YourTurn your_turn = 6;
-        GameFinished game_finished = 7;
-        GameAborted game_aborted = 8;
-        string broadcast_msg = 9;
+        YourTurn your_turn = 7;
+        GameFinished game_finished = 8;
+        GameAborted game_aborted = 9;
+        string broadcast_msg = 10;
     }
     message PlayerJoined {
+        string name = 1;
+        string game_id = 2;
+    }
+    message PlayerLeft {
         string name = 1;
         string game_id = 2;
     }

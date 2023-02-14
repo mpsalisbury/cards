@@ -70,6 +70,10 @@ func (callbacks) HandlePlayerJoined(name string, gameId string) error {
 	fmt.Printf("Player %s joined game %s\n", name, gameId)
 	return nil
 }
+func (callbacks) HandlePlayerLeft(name string, gameId string) error {
+	fmt.Printf("Player %s left game %s\n", name, gameId)
+	return nil
+}
 func (c callbacks) HandleGameStarted() error {
 	gameState, err := c.client.GetGameState(context.Background())
 	if err != nil {

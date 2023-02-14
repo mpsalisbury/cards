@@ -66,6 +66,7 @@ type Connection interface {
 
 type GameCallbacks interface {
 	HandlePlayerJoined(name string, gameId string) error
+	HandlePlayerLeft(name string, gameId string) error
 	HandleGameStarted() error
 	HandleCardPlayed( /*currentTrick cards.Cards*/ ) error
 	HandleYourTurn() error
@@ -77,6 +78,7 @@ type GameCallbacks interface {
 type UnimplementedGameCallbacks struct{}
 
 func (UnimplementedGameCallbacks) HandlePlayerJoined(name string, gameId string) error { return nil }
+func (UnimplementedGameCallbacks) HandlePlayerLeft(name string, gameId string) error   { return nil }
 func (UnimplementedGameCallbacks) HandleGameStarted() error                            { return nil }
 func (UnimplementedGameCallbacks) HandleCardPlayed() error                             { return nil }
 func (UnimplementedGameCallbacks) HandleYourTurn() error                               { return nil }
@@ -293,6 +295,9 @@ func (c *connection) processActivity(activityStream pb.CardGameService_ListenFor
 		case *pb.GameActivityResponse_PlayerJoined_:
 			pj := a.PlayerJoined
 			err = c.callbacks.HandlePlayerJoined(pj.GetName(), pj.GetGameId())
+		case *pb.GameActivityResponse_PlayerLeft_:
+			pl := a.PlayerLeft
+			err = c.callbacks.HandlePlayerLeft(pl.GetName(), pl.GetGameId())
 		case *pb.GameActivityResponse_GameStarted_:
 			err = c.callbacks.HandleGameStarted()
 		case *pb.GameActivityResponse_YourTurn_:
