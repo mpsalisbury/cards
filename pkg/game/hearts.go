@@ -1,17 +1,17 @@
-package server
+package game
 
 import (
 	"fmt"
 	"log"
 	"math/rand"
 
-	"github.com/mpsalisbury/cards/internal/cards"
-	pb "github.com/mpsalisbury/cards/internal/game/proto"
+	"github.com/mpsalisbury/cards/pkg/cards"
+	pb "github.com/mpsalisbury/cards/pkg/proto"
 	"golang.org/x/exp/slices"
 )
 
-func NewGame(gameId string) *game {
-	return &game{
+func NewHeartsGame(gameId string) Game {
+	return &heartsGame{
 		id:           gameId,
 		phase:        Preparing,
 		players:      make(map[string]*player),
@@ -19,7 +19,7 @@ func NewGame(gameId string) *game {
 	}
 }
 
-type game struct {
+type heartsGame struct {
 	id              string
 	phase           GamePhase
 	players         map[string]*player // Keyed by playerId
@@ -29,24 +29,23 @@ type game struct {
 	heartsBroken    bool
 }
 
-func (g game) Id() string {
+func (g heartsGame) Id() string {
 	return g.id
 }
-func (g game) Phase() GamePhase {
+func (g heartsGame) Phase() GamePhase {
 	return g.phase
 }
-func (g *game) Abort() {
+func (g *heartsGame) Abort() {
 	g.phase = Aborted
 }
 
-type GamePhase int8
-
-const (
-	Preparing GamePhase = iota
-	Playing
-	Completed
-	Aborted
-)
+func (g heartsGame) PlayerNames() []string {
+	names := []string{}
+	for _, p := range g.players {
+		names = append(names, p.name)
+	}
+	return names
+}
 
 type trick struct {
 	cards     cards.Cards
@@ -61,7 +60,7 @@ func (t *trick) addCard(card cards.Card, playerId string) {
 	t.playerIds = append(t.playerIds, playerId)
 }
 func (t *trick) chooseWinner() (cards.Card, string) {
-	// Hearts trick winner logic
+	// Trick winner logic
 	cs := t.cards
 	highIndex := 0
 	leadSuit := cs[highIndex].Suit
@@ -75,22 +74,22 @@ func (t *trick) chooseWinner() (cards.Card, string) {
 	return cs[highIndex], t.playerIds[highIndex]
 }
 
-func (g game) AcceptingMorePlayers() bool {
+func (g heartsGame) AcceptingMorePlayers() bool {
 	return len(g.players) < 4
 }
 
-func (g *game) AddPlayer(session *playerSession) {
-	p := &player{name: session.name, playerId: session.id}
-	g.players[session.id] = p
-	g.playerOrder = append(g.playerOrder, session.id)
+func (g *heartsGame) AddPlayer(name string, id string) {
+	p := &player{name: name, playerId: id}
+	g.players[id] = p
+	g.playerOrder = append(g.playerOrder, id)
 }
-func (g *game) containsPlayer(playerId string) bool {
+func (g *heartsGame) containsPlayer(playerId string) bool {
 	_, ok := g.players[playerId]
 	return ok
 }
 
 // Remove player if present
-func (g *game) RemovePlayer(playerId string) error {
+func (g *heartsGame) RemovePlayer(playerId string) error {
 	if !g.containsPlayer(playerId) {
 		return nil
 	}
@@ -111,7 +110,7 @@ func (g *game) RemovePlayer(playerId string) error {
 
 // Return all players, starting with playerId and following in order.
 // If this playerId isn't a player, observer starts with the first player.
-func (g *game) allPlayersInOrder(playerId string) []*player {
+func (g *heartsGame) allPlayersInOrder(playerId string) []*player {
 	var matchingId = 0
 	for i, pid := range g.playerOrder {
 		if pid == playerId {
@@ -129,7 +128,7 @@ func (g *game) allPlayersInOrder(playerId string) []*player {
 }
 
 // Returns true if started.
-func (g *game) StartIfReady() bool {
+func (g *heartsGame) StartIfReady() bool {
 	if g.phase != Preparing {
 		return false
 	}
@@ -147,30 +146,14 @@ func (g *game) StartIfReady() bool {
 	return true
 }
 
-func phaseToProto(phase GamePhase) pb.GameState_Phase {
-	switch phase {
-	case Preparing:
-		return pb.GameState_Preparing
-	case Playing:
-		return pb.GameState_Playing
-	case Completed:
-		return pb.GameState_Completed
-	case Aborted:
-		return pb.GameState_Aborted
-	default:
-		return pb.GameState_Unknown
-	}
-}
-
-func (g game) NextPlayerId() string {
+func (g heartsGame) NextPlayerId() string {
 	return g.playerOrder[g.nextPlayerIndex]
 }
 
-func (g game) GetGameState(playerId string) (*pb.GameState, error) {
+func (g heartsGame) GetGameState(playerId string) (*pb.GameState, error) {
 	_, requesterIsPlayer := g.players[playerId]
-	phase := phaseToProto(g.phase)
 	if g.phase != Playing && g.phase != Completed {
-		return &pb.GameState{Phase: phase}, nil
+		return &pb.GameState{Phase: g.phase.ToProto()}, nil
 	}
 	players := []*pb.GameState_Player{}
 	for _, p := range g.allPlayersInOrder(playerId) {
@@ -181,7 +164,7 @@ func (g game) GetGameState(playerId string) (*pb.GameState, error) {
 
 	gs := &pb.GameState{
 		Id:           g.id,
-		Phase:        phase,
+		Phase:        g.phase.ToProto(),
 		Players:      players,
 		CurrentTrick: currentTrick,
 	}
@@ -209,7 +192,7 @@ func toCardsProto(cards cards.Cards) *pb.GameState_Cards {
 	}
 }
 
-func (g game) playerState(p *player, hideOther bool) *pb.GameState_Player {
+func (g heartsGame) playerState(p *player, hideOther bool) *pb.GameState_Player {
 	ps := &pb.GameState_Player{
 		Name:         p.name,
 		NumCards:     int32(len(p.cards)),
@@ -224,7 +207,7 @@ func (g game) playerState(p *player, hideOther bool) *pb.GameState_Player {
 	return ps
 }
 
-func (g *game) HandlePlayCard(playerId string, card cards.Card, r Reporter) error {
+func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r Reporter) error {
 	p, ok := g.players[playerId]
 	if !ok {
 		return fmt.Errorf("player not found for game %s in playerId %s", g.Id, playerId)
@@ -272,7 +255,7 @@ func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, h
 		if heartsBroken {
 			return true
 		}
-		// if all cards are hearts, it's okay
+		// if all cards are Hearts, it's okay
 		for _, c := range hand {
 			if c.Suit != cards.Hearts {
 				return false

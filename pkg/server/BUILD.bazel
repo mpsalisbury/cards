@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "server",
+    srcs = [
+        "game.go",
+        "service.go",
+    ],
+    importpath = "github.com/mpsalisbury/cards/internal/game/server",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/cards",
+        "@org_golang_x_exp//slices",
+    ],
+)

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mpsalisbury/cards/internal/cards"
-	pb "github.com/mpsalisbury/cards/internal/game/proto"
+	"github.com/mpsalisbury/cards/pkg/cards"
+	pb "github.com/mpsalisbury/cards/pkg/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

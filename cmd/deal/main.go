@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/mpsalisbury/cards/internal/cards"
+	"github.com/mpsalisbury/cards/pkg/cards"
 	"golang.org/x/exp/slices"
 )
 

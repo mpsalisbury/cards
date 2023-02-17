@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mpsalisbury/cards/internal/game/client"
+	"github.com/mpsalisbury/cards/pkg/client"
 )
 
 var (

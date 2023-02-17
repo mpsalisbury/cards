@@ -8,14 +8,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mpsalisbury/cards/internal/cards"
-	pb "github.com/mpsalisbury/cards/internal/game/proto"
+	"github.com/mpsalisbury/cards/pkg/cards"
+	"github.com/mpsalisbury/cards/pkg/game"
+	pb "github.com/mpsalisbury/cards/pkg/proto"
 )
 
 func NewCardGameService() pb.CardGameServiceServer {
 	return &cardGameService{
 		players: make(map[string]*playerSession),
-		games:   make(map[string]*game),
+		games:   make(map[string]game.Game),
 	}
 }
 
@@ -23,7 +24,7 @@ type cardGameService struct {
 	pb.UnimplementedCardGameServiceServer
 	mu      sync.Mutex                // Mutex for all data below
 	players map[string]*playerSession // Keyed by playerId
-	games   map[string]*game          // Keyed by gameId
+	games   map[string]game.Game      // Keyed by gameId
 }
 
 type activityReport = *pb.GameActivityResponse
@@ -68,9 +69,9 @@ func (s *cardGameService) newGameId() string {
 		}
 	}
 }
-func (s *cardGameService) addGame() *game {
+func (s *cardGameService) addGame() game.Game {
 	gameId := s.newGameId()
-	g := NewGame(gameId)
+	g := game.NewHeartsGame(gameId)
 	s.games[gameId] = g
 	return g
 }
@@ -133,14 +134,10 @@ func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesReques
 	var games []*pb.ListGamesResponse_GameSummary
 	for _, g := range s.games {
 		if filter(g) {
-			names := []string{}
-			for _, p := range g.players {
-				names = append(names, p.name)
-			}
 			games = append(games, &pb.ListGamesResponse_GameSummary{
 				Id:          g.Id(),
-				Phase:       phaseToProto(g.Phase()),
-				PlayerNames: names,
+				Phase:       g.Phase().ToProto(),
+				PlayerNames: g.PlayerNames(),
 			})
 		}
 	}
@@ -150,13 +147,13 @@ func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesReques
 }
 
 // Builds filter that accepts only games with one of the given phases (or any phase if no phases listed).
-func makeGameFilter(phases []pb.GameState_Phase) func(*game) bool {
-	return func(g *game) bool {
+func makeGameFilter(phases []pb.GameState_Phase) func(game.Game) bool {
+	return func(g game.Game) bool {
 		if len(phases) == 0 {
 			return true
 		}
 		for _, ph := range phases {
-			if phaseToProto(g.Phase()) == ph {
+			if g.Phase().ToProto() == ph {
 				return true
 			}
 		}
@@ -173,26 +170,26 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 	if !ok {
 		return nil, fmt.Errorf("playerId %s not found", playerId)
 	}
-	var game *game
+	var g game.Game
 	if gameId == "" {
-		game = s.addGame()
-		gameId = game.Id()
+		g = s.addGame()
+		gameId = g.Id()
 	} else {
-		game, ok = s.games[gameId]
+		g, ok = s.games[gameId]
 		if !ok {
 			return nil, fmt.Errorf("game %s not found", gameId)
 		}
 	}
 	player.gameId = gameId
 	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
-		if !game.AcceptingMorePlayers() {
+		if !g.AcceptingMorePlayers() {
 			return nil, fmt.Errorf("game %s is full", gameId)
 		}
-		game.AddPlayer(player)
+		g.AddPlayer(player.name, player.id)
 		s.ReportPlayerJoined(player.name, gameId)
-		if game.StartIfReady() {
+		if g.StartIfReady() {
 			s.ReportGameStarted()
-			s.reportNextTurn(game)
+			s.reportNextTurn(g)
 		}
 	}
 	return &pb.JoinGameResponse{GameId: gameId}, nil
@@ -230,11 +227,11 @@ func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateReq
 	if err != nil {
 		return nil, err
 	}
-	game, found := s.games[gameId]
+	g, found := s.games[gameId]
 	if !found {
 		return nil, fmt.Errorf("no game found for playerId %s : %s", playerId, gameId)
 	}
-	return game.GetGameState(playerId)
+	return g.GetGameState(playerId)
 }
 
 func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerActionRequest) (*pb.Status, error) {
@@ -259,19 +256,19 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 	if !found {
 		return fmt.Errorf("playerId %s not found", playerId)
 	}
-	game, found := s.games[player.gameId]
+	g, found := s.games[player.gameId]
 	if !found {
 		return fmt.Errorf("no game %s found for playerId %s", player.gameId, playerId)
 	}
-	err := game.HandlePlayCard(playerId, card, s)
+	err := g.HandlePlayCard(playerId, card, s)
 	if err != nil {
 		return err
 	}
-	if game.Phase() != Completed {
-		s.reportNextTurn(game)
+	if g.Phase() != game.Completed {
+		s.reportNextTurn(g)
 	} else {
 		s.ReportGameFinished()
-		s.scheduleRemoveGame(game.Id())
+		s.scheduleRemoveGame(g.Id())
 	}
 	return nil
 }
@@ -289,19 +286,6 @@ func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, res
 	s.players[playerId].ch = nil
 	close(ch)
 	return err
-}
-
-// Report activity back to the players.
-type Reporter interface {
-	ReportPlayerJoined(name string, gameId string)
-	ReportPlayerLeft(name string, gameId string)
-	ReportGameStarted()
-	ReportCardPlayed()
-	ReportTrickCompleted()
-	ReportGameFinished()
-	ReportGameAborted()
-	ReportYourTurn(pId string)
-	BroadcastMessage(msg string)
 }
 
 // Broadcasts message to all clients.
@@ -364,12 +348,12 @@ func (s *cardGameService) reportActivity(activity activityReport) {
 		}
 	}
 }
-func (s *cardGameService) reportNextTurn(game *game) {
-	if game.Phase() != Playing {
+func (s *cardGameService) reportNextTurn(g game.Game) {
+	if g.Phase() != game.Playing {
 		log.Print("Can't report next turn for game not in state Playing")
 		return
 	}
-	s.ReportYourTurn(game.NextPlayerId())
+	s.ReportYourTurn(g.NextPlayerId())
 }
 func (s *cardGameService) ReportYourTurn(pId string) {
 	sess, ok := s.players[pId]
