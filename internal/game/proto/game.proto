@@ -22,7 +22,7 @@ message RegisterRequest {
 message RegisterResponse {
     // The is for the created session.
     // Use this id for all other requests for this session.
-    string session_id = 1;
+    string player_id = 1;
 }
 
 message ListGamesRequest {
@@ -45,16 +45,17 @@ message JoinGameRequest {
         AsPlayer = 1;
         AsObserver = 2;
     }
-    string session_id = 1;
+    string player_id = 1;
     string game_id = 2;
     Mode mode = 3;
 }
 
 message JoinGameResponse {
+    string game_id = 1;
 }
 
 message LeaveGameRequest {
-    string session_id = 1;
+    string player_id = 1;
     string game_id = 2;
 }
 
@@ -62,7 +63,10 @@ message LeaveGameResponse {
 }
 
 message GameStateRequest {
-    string session_id = 1;
+    oneof type {
+        string player_id = 1;
+        string game_id = 2;
+    }
 }
 
 message GameState{
@@ -85,13 +89,14 @@ message GameState{
     message Cards {
         repeated string cards = 1;
     }
-    Phase phase = 1;
-    repeated Player players = 2;
-    Cards current_trick = 3;
+    string id = 1;
+    Phase phase = 2;
+    repeated Player players = 3;
+    Cards current_trick = 4;
 }
 
 message PlayerActionRequest {
-    string session_id = 1;
+    string player_id = 1;
     oneof type {
         PlayCardAction play_card = 2;
     }
@@ -107,7 +112,7 @@ message Status {
 }
 
 message GameActivityRequest {
-    string session_id = 1;
+    string player_id = 1;
 }
 
 message GameActivityResponse {

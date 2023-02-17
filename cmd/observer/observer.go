@@ -14,7 +14,8 @@ import (
 
 var (
 	//	logger     = log.New(os.Stdout, "", 0)
-	gameId = flag.String("game", "", "Game to observe")
+	gameId  = flag.String("game", "", "Game to observe")
+	verbose = flag.Bool("verbose", false, "Print extra information during the session")
 )
 
 func init() {
@@ -23,7 +24,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	conn, err := client.Connect(client.LocalServer)
+	conn, err := client.Connect(client.LocalServer, *verbose)
 	if err != nil {
 		log.Fatalf("Couldn't connect to server: %v", err)
 	}
@@ -31,25 +32,32 @@ func main() {
 		showGames(conn)
 		return
 	}
-
 	ctx := context.Background()
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
+	gameState, err := conn.GetGameStateForGameId(ctx, *gameId)
+	if gameState.Phase == client.Completed || gameState.Phase == client.Aborted {
+		// game is complete, just dump state.
+		fmt.Printf("%v\n", gameState)
+		return
+	}
+
 	name := fmt.Sprintf("Observer%04d", rand.Intn(10000))
-	err = conn.Register(ctx, name, callbacks{client: conn, wg: wg})
+	err = conn.Register(ctx, name, callbacks{client: conn})
 	if err != nil {
 		log.Fatalf("Couldn't register with server: %v", err)
 	}
-	err = conn.JoinGameAsObserver(ctx, *gameId)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	joinedGameId, err := conn.JoinGameAsObserver(ctx, wg, *gameId)
 	if err != nil {
-		log.Fatalf("Couldn't join game %s: %v", *gameId, err)
+		log.Fatalf("Couldn't observe game %s: %v", *gameId, err)
 	}
+	fmt.Printf("Observing game %s\n", joinedGameId)
 	wg.Wait()
 }
 
 func showGames(conn client.Connection) {
 	ctx := context.Background()
-	games, err := conn.ListGames(ctx, client.Preparing)
+	games, err := conn.ListGames(ctx)
 	if err != nil {
 		log.Fatalf("Couldn't list games: %v", err)
 	}
@@ -63,7 +71,6 @@ func showGames(conn client.Connection) {
 type callbacks struct {
 	client.UnimplementedGameCallbacks
 	client client.Connection
-	wg     *sync.WaitGroup
 }
 
 func (callbacks) HandlePlayerJoined(name string, gameId string) error {
@@ -85,18 +92,15 @@ func (c callbacks) HandleGameStarted() error {
 func (c callbacks) HandleGameFinished() error {
 	fmt.Printf("Game over\n")
 	c.showGameState()
-	c.wg.Done()
 	return nil
 }
 func (c callbacks) HandleGameAborted() error {
 	fmt.Printf("Game aborted\n")
 	c.showGameState()
-	c.wg.Done()
 	return nil
 }
 func (c callbacks) HandleConnectionError(err error) {
 	fmt.Printf("Connection error: %v\n", err)
-	c.wg.Done()
 }
 func (c callbacks) showGameState() {
 	gameState, err := c.client.GetGameState(context.Background())
