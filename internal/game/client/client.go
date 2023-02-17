@@ -61,6 +61,7 @@ type Connection interface {
 	ListGames(ctx context.Context, phase ...GamePhase) ([]GameSummary, error)
 	JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
+	LeaveGame(ctx context.Context) error
 	GetGameState(ctx context.Context) (GameState, error)
 	GetGameStateForGameId(ctx context.Context, gameId string) (GameState, error)
 	PlayCard(ctx context.Context, card cards.Card) error
@@ -197,7 +198,7 @@ func (p PlayerState) String() string {
 type connection struct {
 	conn      *grpc.ClientConn
 	client    pb.CardGameServiceClient
-	playerId string
+	playerId  string
 	callbacks GameCallbacks
 	verbose   bool
 }
@@ -258,8 +259,8 @@ func (c *connection) JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup,
 func (c *connection) JoinGame(ctx context.Context, wg *sync.WaitGroup, gameId string, mode pb.JoinGameRequest_Mode) (string, error) {
 	joinReq := &pb.JoinGameRequest{
 		PlayerId: c.playerId,
-		GameId:    gameId,
-		Mode:      mode,
+		GameId:   gameId,
+		Mode:     mode,
 	}
 	joinResp, err := c.client.JoinGame(ctx, joinReq)
 	if err != nil {
@@ -322,6 +323,14 @@ func (c *connection) processActivity(wg *sync.WaitGroup, activityStream pb.CardG
 		}
 	}
 	wg.Done()
+}
+
+func (c *connection) LeaveGame(ctx context.Context) error {
+	req := &pb.LeaveGameRequest{
+		PlayerId: c.playerId,
+	}
+	_, err := c.client.LeaveGame(ctx, req)
+	return err
 }
 
 func (c *connection) GetGameStateForGameId(ctx context.Context, gameId string) (GameState, error) {

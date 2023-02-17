@@ -70,12 +70,7 @@ func (s *cardGameService) newGameId() string {
 }
 func (s *cardGameService) addGame() *game {
 	gameId := s.newGameId()
-	g := &game{
-		id:           gameId,
-		phase:        Preparing,
-		players:      make(map[string]*player),
-		currentTrick: &trick{},
-	}
+	g := NewGame(gameId)
 	s.games[gameId] = g
 	return g
 }
@@ -88,14 +83,14 @@ func (s *cardGameService) removePlayer(playerId string) error {
 	}
 	delete(s.players, playerId)
 	if game, found := s.games[player.gameId]; found {
-		err := game.removePlayer(playerId)
+		err := game.RemovePlayer(playerId)
 		if err != nil {
 			// Can't remove player, abort game
-			game.phase = Aborted
+			game.Abort()
 			s.ReportGameAborted()
-			s.scheduleRemoveGame(game.id)
+			s.scheduleRemoveGame(game.Id())
 		} else {
-			s.ReportPlayerLeft(playerId, game.id)
+			s.ReportPlayerLeft(playerId, game.Id())
 		}
 	}
 	return nil
@@ -143,8 +138,8 @@ func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesReques
 				names = append(names, p.name)
 			}
 			games = append(games, &pb.ListGamesResponse_GameSummary{
-				Id:          g.id,
-				Phase:       phaseToProto(g.phase),
+				Id:          g.Id(),
+				Phase:       phaseToProto(g.Phase()),
 				PlayerNames: names,
 			})
 		}
@@ -161,7 +156,7 @@ func makeGameFilter(phases []pb.GameState_Phase) func(*game) bool {
 			return true
 		}
 		for _, ph := range phases {
-			if phaseToProto(g.phase) == ph {
+			if phaseToProto(g.Phase()) == ph {
 				return true
 			}
 		}
@@ -181,7 +176,7 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 	var game *game
 	if gameId == "" {
 		game = s.addGame()
-		gameId = game.id
+		gameId = game.Id()
 	} else {
 		game, ok = s.games[gameId]
 		if !ok {
@@ -190,17 +185,28 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 	}
 	player.gameId = gameId
 	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
-		if !game.acceptingMorePlayers() {
+		if !game.AcceptingMorePlayers() {
 			return nil, fmt.Errorf("game %s is full", gameId)
 		}
-		game.addPlayer(player)
+		game.AddPlayer(player)
 		s.ReportPlayerJoined(player.name, gameId)
-		if game.startIfReady() {
+		if game.StartIfReady() {
 			s.ReportGameStarted()
 			s.reportNextTurn(game)
 		}
 	}
 	return &pb.JoinGameResponse{GameId: gameId}, nil
+}
+
+func (s *cardGameService) LeaveGame(ctx context.Context, req *pb.LeaveGameRequest) (*pb.LeaveGameResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	playerId := req.GetPlayerId()
+	err := s.removePlayer(playerId)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.LeaveGameResponse{}, nil
 }
 
 func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameState, error) {
@@ -228,7 +234,7 @@ func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateReq
 	if !found {
 		return nil, fmt.Errorf("no game found for playerId %s : %s", playerId, gameId)
 	}
-	return game.getGameState(playerId)
+	return game.GetGameState(playerId)
 }
 
 func (s *cardGameService) PlayerAction(ctx context.Context, req *pb.PlayerActionRequest) (*pb.Status, error) {
@@ -257,19 +263,15 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 	if !found {
 		return fmt.Errorf("no game %s found for playerId %s", player.gameId, playerId)
 	}
-	p, ok := game.players[playerId]
-	if !ok {
-		return fmt.Errorf("player not found for game %s in playerId %s", game.id, playerId)
-	}
-	err := game.handlePlayCard(p, card, s)
+	err := game.HandlePlayCard(playerId, card, s)
 	if err != nil {
 		return err
 	}
-	if game.phase != Completed {
+	if game.Phase() != Completed {
 		s.reportNextTurn(game)
 	} else {
 		s.ReportGameFinished()
-		s.scheduleRemoveGame(game.id)
+		s.scheduleRemoveGame(game.Id())
 	}
 	return nil
 }
@@ -363,7 +365,7 @@ func (s *cardGameService) reportActivity(activity activityReport) {
 	}
 }
 func (s *cardGameService) reportNextTurn(game *game) {
-	if game.phase != Playing {
+	if game.Phase() != Playing {
 		log.Print("Can't report next turn for game not in state Playing")
 		return
 	}

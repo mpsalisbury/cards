@@ -56,7 +56,6 @@ message JoinGameResponse {
 
 message LeaveGameRequest {
     string player_id = 1;
-    string game_id = 2;
 }
 
 message LeaveGameResponse {

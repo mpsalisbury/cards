@@ -10,9 +10,18 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+func NewGame(gameId string) *game {
+	return &game{
+		id:           gameId,
+		phase:        Preparing,
+		players:      make(map[string]*player),
+		currentTrick: &trick{},
+	}
+}
+
 type game struct {
 	id              string
-	phase           gamePhase
+	phase           GamePhase
 	players         map[string]*player // Keyed by playerId
 	playerOrder     []string           // by playerId
 	currentTrick    *trick
@@ -20,10 +29,20 @@ type game struct {
 	heartsBroken    bool
 }
 
-type gamePhase int8
+func (g game) Id() string {
+	return g.id
+}
+func (g game) Phase() GamePhase {
+	return g.phase
+}
+func (g *game) Abort() {
+	g.phase = Aborted
+}
+
+type GamePhase int8
 
 const (
-	Preparing gamePhase = iota
+	Preparing GamePhase = iota
 	Playing
 	Completed
 	Aborted
@@ -56,11 +75,11 @@ func (t *trick) chooseWinner() (cards.Card, string) {
 	return cs[highIndex], t.playerIds[highIndex]
 }
 
-func (g game) acceptingMorePlayers() bool {
+func (g game) AcceptingMorePlayers() bool {
 	return len(g.players) < 4
 }
 
-func (g *game) addPlayer(session *playerSession) {
+func (g *game) AddPlayer(session *playerSession) {
 	p := &player{name: session.name, playerId: session.id}
 	g.players[session.id] = p
 	g.playerOrder = append(g.playerOrder, session.id)
@@ -71,7 +90,7 @@ func (g *game) containsPlayer(playerId string) bool {
 }
 
 // Remove player if present
-func (g *game) removePlayer(playerId string) error {
+func (g *game) RemovePlayer(playerId string) error {
 	if !g.containsPlayer(playerId) {
 		return nil
 	}
@@ -110,7 +129,7 @@ func (g *game) allPlayersInOrder(playerId string) []*player {
 }
 
 // Returns true if started.
-func (g *game) startIfReady() bool {
+func (g *game) StartIfReady() bool {
 	if g.phase != Preparing {
 		return false
 	}
@@ -128,7 +147,7 @@ func (g *game) startIfReady() bool {
 	return true
 }
 
-func phaseToProto(phase gamePhase) pb.GameState_Phase {
+func phaseToProto(phase GamePhase) pb.GameState_Phase {
 	switch phase {
 	case Preparing:
 		return pb.GameState_Preparing
@@ -147,7 +166,7 @@ func (g game) NextPlayerId() string {
 	return g.playerOrder[g.nextPlayerIndex]
 }
 
-func (g game) getGameState(playerId string) (*pb.GameState, error) {
+func (g game) GetGameState(playerId string) (*pb.GameState, error) {
 	_, requesterIsPlayer := g.players[playerId]
 	phase := phaseToProto(g.phase)
 	if g.phase != Playing && g.phase != Completed {
@@ -205,7 +224,11 @@ func (g game) playerState(p *player, hideOther bool) *pb.GameState_Player {
 	return ps
 }
 
-func (g *game) handlePlayCard(p *player, card cards.Card, r Reporter) error {
+func (g *game) HandlePlayCard(playerId string, card cards.Card, r Reporter) error {
+	p, ok := g.players[playerId]
+	if !ok {
+		return fmt.Errorf("player not found for game %s in playerId %s", g.Id, playerId)
+	}
 	if !slices.Contains(p.cards, card) {
 		return fmt.Errorf("player %s does not have card %s", p.playerId, card)
 	}
