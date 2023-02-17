@@ -1,3 +1,10 @@
+# To ignore in-place-generated binaries:
+# Ignore all
+*
+# Unignore all with extensions
+!*.*
+# Unignore all dirs
+!*/
+
 /bazel-*
 .vscode
-
