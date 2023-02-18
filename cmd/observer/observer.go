@@ -33,7 +33,10 @@ func main() {
 		return
 	}
 	ctx := context.Background()
-	gameState, err := conn.GetGameStateForGameId(ctx, *gameId)
+	gameState, err := conn.GetGameState(ctx, *gameId)
+	if err != nil {
+		log.Fatalf("Couldn't get gamestate: %v", err)
+	}
 	if gameState.Phase == client.Completed || gameState.Phase == client.Aborted {
 		// game is complete, just dump state.
 		fmt.Printf("%v\n", gameState)
@@ -41,13 +44,13 @@ func main() {
 	}
 
 	name := fmt.Sprintf("Observer%04d", rand.Intn(10000))
-	err = conn.Register(ctx, name, callbacks{client: conn})
+	session, err := conn.Register(ctx, name, callbacks{})
 	if err != nil {
 		log.Fatalf("Couldn't register with server: %v", err)
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	joinedGameId, err := conn.JoinGameAsObserver(ctx, wg, *gameId)
+	joinedGameId, err := session.JoinGameAsObserver(ctx, wg, *gameId)
 	if err != nil {
 		log.Fatalf("Couldn't observe game %s: %v", *gameId, err)
 	}
@@ -70,49 +73,48 @@ func showGames(conn client.Connection) {
 // client.GameCallbacks
 type callbacks struct {
 	client.UnimplementedGameCallbacks
-	client client.Connection
 }
 
-func (callbacks) HandlePlayerJoined(name string, gameId string) error {
+func (callbacks) HandlePlayerJoined(s client.Session, name string, gameId string) error {
 	fmt.Printf("Player %s joined game %s\n", name, gameId)
 	return nil
 }
-func (callbacks) HandlePlayerLeft(name string, gameId string) error {
+func (callbacks) HandlePlayerLeft(s client.Session, name string, gameId string) error {
 	fmt.Printf("Player %s left game %s\n", name, gameId)
 	return nil
 }
-func (c callbacks) HandleGameStarted() error {
-	gameState, err := c.client.GetGameState(context.Background())
+func (c callbacks) HandleGameStarted(s client.Session) error {
+	gameState, err := s.GetGameState(context.Background())
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	fmt.Printf("%v\n", gameState)
 	return nil
 }
-func (c callbacks) HandleGameFinished() error {
+func (c callbacks) HandleGameFinished(s client.Session) error {
 	fmt.Printf("Game over\n")
-	c.showGameState()
+	c.showGameState(s)
 	return nil
 }
-func (c callbacks) HandleGameAborted() error {
+func (c callbacks) HandleGameAborted(s client.Session) error {
 	fmt.Printf("Game aborted\n")
-	c.showGameState()
+	c.showGameState(s)
 	return nil
 }
-func (c callbacks) HandleConnectionError(err error) {
+func (c callbacks) HandleConnectionError(s client.Session, err error) {
 	fmt.Printf("Connection error: %v\n", err)
 }
-func (c callbacks) showGameState() {
-	gameState, err := c.client.GetGameState(context.Background())
+func (c callbacks) showGameState(s client.Session) {
+	gameState, err := s.GetGameState(context.Background())
 	if err != nil {
 		log.Fatalf("Couldn't get game state: %v", err)
 	}
 	fmt.Printf("%v\n", gameState)
 }
 
-func (c callbacks) HandleTrickCompleted() error {
+func (c callbacks) HandleTrickCompleted(s client.Session) error {
 	ctx := context.Background()
-	gameState, err := c.client.GetGameState(ctx)
+	gameState, err := s.GetGameState(ctx)
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}

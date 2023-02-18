@@ -49,7 +49,7 @@ type Reporter interface {
 	ReportPlayerLeft(name string, gameId string)
 	ReportGameStarted()
 	ReportCardPlayed()
-	ReportTrickCompleted()
+	ReportTrickCompleted(trick cards.Cards, trickWinnerId, trickWinnerName string)
 	ReportGameFinished()
 	ReportGameAborted()
 	ReportYourTurn(pId string)

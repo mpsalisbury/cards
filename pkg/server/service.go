@@ -330,10 +330,16 @@ func (s *cardGameService) ReportCardPlayed() {
 			Type: &pb.GameActivityResponse_CardPlayed_{},
 		})
 }
-func (s *cardGameService) ReportTrickCompleted() {
+func (s *cardGameService) ReportTrickCompleted(trick cards.Cards, trickWinnerId, trickWinnerName string) {
 	s.reportActivityToAll(
 		&pb.GameActivityResponse{
-			Type: &pb.GameActivityResponse_TrickCompleted_{},
+			Type: &pb.GameActivityResponse_TrickCompleted_{
+				TrickCompleted: &pb.GameActivityResponse_TrickCompleted{
+					Trick:           trick.Strings(),
+					TrickWinnerId:   trickWinnerId,
+					TrickWinnerName: trickWinnerName,
+				},
+			},
 		})
 }
 func (s *cardGameService) ReportGameFinished() {

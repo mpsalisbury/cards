@@ -24,6 +24,7 @@ type heartsGame struct {
 	phase           game.GamePhase
 	players         map[string]*player // Keyed by playerId
 	playerOrder     []string           // by playerId
+	numTricksPlayed int
 	currentTrick    *trick
 	nextPlayerIndex int // index into playerOrder
 	heartsBroken    bool
@@ -158,6 +159,9 @@ func (g heartsGame) findPlayerIndexWithCard(fc cards.Card) int {
 	return 0
 }
 
+func (g heartsGame) nextPlayer() *player {
+	return g.players[g.NextPlayerId()]
+}
 func (g heartsGame) NextPlayerId() string {
 	return g.playerOrder[g.nextPlayerIndex]
 }
@@ -172,7 +176,7 @@ func (g heartsGame) GetGameState(playerId string) (*pb.GameState, error) {
 		hideOtherPlayerState := requesterIsPlayer && (p.playerId != playerId)
 		players = append(players, g.playerState(p, hideOtherPlayerState))
 	}
-	currentTrick := toCardsProto(g.currentTrick.cards)
+	currentTrick := g.currentTrick.cards.ToProto()
 
 	gs := &pb.GameState{
 		Id:           g.id,
@@ -191,30 +195,17 @@ type player struct {
 	trickScore int
 }
 
-func toCardsProtos(tricks []cards.Cards) []*pb.GameState_Cards {
-	ts := []*pb.GameState_Cards{}
-	for _, t := range tricks {
-		ts = append(ts, toCardsProto(t))
-	}
-	return ts
-}
-func toCardsProto(cards cards.Cards) *pb.GameState_Cards {
-	return &pb.GameState_Cards{
-		Cards: cards.Strings(),
-	}
-}
-
 func (g heartsGame) playerState(p *player, hideOther bool) *pb.GameState_Player {
 	ps := &pb.GameState_Player{
 		Name:         p.name,
 		NumCards:     int32(len(p.cards)),
-		Tricks:       toCardsProtos(p.tricks),
+		Tricks:       cards.ToProtos(p.tricks),
 		NumTricks:    int32(len(p.tricks)),
 		TrickScore:   int32(p.trickScore),
 		IsNextPlayer: p.playerId == g.playerOrder[g.nextPlayerIndex],
 	}
 	if !hideOther {
-		ps.Cards = toCardsProto(p.cards)
+		ps.Cards = p.cards.ToProto()
 	}
 	return ps
 }
@@ -225,12 +216,12 @@ func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Rep
 	}
 	p, ok := g.players[playerId]
 	if !ok {
-		return fmt.Errorf("player not found for game %s in playerId %s", g.id, playerId)
+		return fmt.Errorf("player %s not found for game %s", playerId, g.id)
 	}
 	if !slices.Contains(p.cards, card) {
-		return fmt.Errorf("player %s does not have card %s", p.playerId, card)
+		return fmt.Errorf("player %s does not have card %s", playerId, card)
 	}
-	if !isValidCardForTrick(card, g.currentTrick.cards, p.cards, len(p.tricks) == 0, g.heartsBroken) {
+	if !isValidCardForTrick(card, g.currentTrick.cards, p.cards, g.numTricksPlayed == 0, g.heartsBroken) {
 		return fmt.Errorf("player %s cannot play card %s", p.playerId, card)
 	}
 	if card.Suit == cards.Hearts {
@@ -239,23 +230,24 @@ func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Rep
 	p.cards = p.cards.Remove(card)
 	g.currentTrick.addCard(card, p.playerId)
 	r.ReportCardPlayed()
-	fmt.Printf("%s - %s\n", card, p.cards.HandString())
 
 	if g.currentTrick.size() < 4 {
 		g.nextPlayerIndex = (g.nextPlayerIndex + 1) % 4
 		return nil
 	}
 	// Trick is over.
-	winningCard, winnerId := g.currentTrick.chooseWinner()
+	winningTrick := g.currentTrick
+	winningCard, winnerId := winningTrick.chooseWinner()
 	winner := g.players[winnerId]
-	fmt.Printf("Trick: %s - winning card %s\n", g.currentTrick.cards, winningCard)
+	fmt.Printf("Trick: %s - winning card %s\n", winningTrick.cards, winningCard)
 	winner.tricks = append(winner.tricks, g.currentTrick.cards)
 	g.currentTrick = &trick{}
+	g.numTricksPlayed++
 	g.nextPlayerIndex = slices.Index(g.playerOrder, winnerId)
-	r.ReportTrickCompleted()
+	r.ReportTrickCompleted(winningTrick.cards, winnerId, winner.name)
 
 	// If next player has no more cards, we're done.
-	if len(g.players[g.playerOrder[g.nextPlayerIndex]].cards) == 0 {
+	if len(g.nextPlayer().cards) == 0 {
 		g.phase = game.Completed
 	}
 	return nil

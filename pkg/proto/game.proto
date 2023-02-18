@@ -143,6 +143,9 @@ message GameActivityResponse {
     message CardPlayed {
     }
     message TrickCompleted {
+        repeated string trick = 1;
+        string trick_winner_id = 2;
+        string trick_winner_name = 3;
     }
     message YourTurn {
     }

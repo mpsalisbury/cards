@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	pb "github.com/mpsalisbury/cards/pkg/proto"
 )
 
 type Cards []Card
@@ -17,6 +19,20 @@ func MakeDeck() Cards {
 		}
 	}
 	return d
+}
+
+func (cs Cards) ToProto() *pb.GameState_Cards {
+	return &pb.GameState_Cards{
+		Cards: cs.Strings(),
+	}
+}
+
+func ToProtos(tricks []Cards) []*pb.GameState_Cards {
+	ts := []*pb.GameState_Cards{}
+	for _, t := range tricks {
+		ts = append(ts, t.ToProto())
+	}
+	return ts
 }
 
 func (cs Cards) Remove(c Card) Cards {

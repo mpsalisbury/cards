@@ -80,38 +80,47 @@ func createInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error)
 
 type Connection interface {
 	Close()
-	Register(ctx context.Context, name string, callbacks GameCallbacks) error
+	Register(ctx context.Context, name string, callbacks GameCallbacks) (Session, error)
 	ListGames(ctx context.Context, phase ...GamePhase) ([]GameSummary, error)
+	GetGameState(ctx context.Context, gameId string) (GameState, error)
+}
+type Session interface {
 	JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	LeaveGame(ctx context.Context) error
 	GetGameState(ctx context.Context) (GameState, error)
-	GetGameStateForGameId(ctx context.Context, gameId string) (GameState, error)
 	PlayCard(ctx context.Context, card cards.Card) error
 }
 
 type GameCallbacks interface {
-	HandlePlayerJoined(name string, gameId string) error
-	HandlePlayerLeft(name string, gameId string) error
-	HandleGameStarted() error
-	HandleCardPlayed( /*currentTrick cards.Cards*/ ) error
-	HandleYourTurn() error
-	HandleTrickCompleted( /*trick cards.Cards, trickWinner string*/ ) error
-	HandleGameFinished() error
-	HandleGameAborted() error
-	HandleConnectionError(err error)
+	HandlePlayerJoined(s Session, name string, gameId string) error
+	HandlePlayerLeft(s Session, name string, gameId string) error
+	HandleGameStarted(Session) error
+	HandleCardPlayed(Session /*currentTrick cards.Cards*/) error
+	HandleYourTurn(Session) error
+	HandleTrickCompleted(s Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error
+	HandleGameFinished(Session) error
+	HandleGameAborted(Session) error
+	HandleConnectionError(s Session, err error)
 }
 type UnimplementedGameCallbacks struct{}
 
-func (UnimplementedGameCallbacks) HandlePlayerJoined(name string, gameId string) error { return nil }
-func (UnimplementedGameCallbacks) HandlePlayerLeft(name string, gameId string) error   { return nil }
-func (UnimplementedGameCallbacks) HandleGameStarted() error                            { return nil }
-func (UnimplementedGameCallbacks) HandleCardPlayed() error                             { return nil }
-func (UnimplementedGameCallbacks) HandleYourTurn() error                               { return nil }
-func (UnimplementedGameCallbacks) HandleTrickCompleted() error                         { return nil }
-func (UnimplementedGameCallbacks) HandleGameFinished() error                           { return nil }
-func (UnimplementedGameCallbacks) HandleGameAborted() error                            { return nil }
-func (UnimplementedGameCallbacks) HandleConnectionError(error)                         {}
+func (UnimplementedGameCallbacks) HandlePlayerJoined(s Session, name string, gameId string) error {
+	return nil
+}
+func (UnimplementedGameCallbacks) HandlePlayerLeft(s Session, name string, gameId string) error {
+	return nil
+}
+func (UnimplementedGameCallbacks) HandleGameStarted(Session) error { return nil }
+func (UnimplementedGameCallbacks) HandleCardPlayed(Session) error  { return nil }
+func (UnimplementedGameCallbacks) HandleYourTurn(Session) error    { return nil }
+func (UnimplementedGameCallbacks) HandleTrickCompleted(
+	s Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
+	return nil
+}
+func (UnimplementedGameCallbacks) HandleGameFinished(Session) error     { return nil }
+func (UnimplementedGameCallbacks) HandleGameAborted(Session) error      { return nil }
+func (UnimplementedGameCallbacks) HandleConnectionError(Session, error) {}
 
 type GameState struct {
 	Id           string
@@ -219,11 +228,9 @@ func (p PlayerState) String() string {
 }
 
 type connection struct {
-	conn      *grpc.ClientConn
-	client    pb.CardGameServiceClient
-	playerId  string
-	callbacks GameCallbacks
-	verbose   bool
+	conn    *grpc.ClientConn
+	client  pb.CardGameServiceClient
+	verbose bool
 }
 
 func (c *connection) Close() {
@@ -233,17 +240,22 @@ func (c *connection) Close() {
 	}
 }
 
-func (c *connection) Register(ctx context.Context, name string, callbacks GameCallbacks) error {
+func (c *connection) Register(ctx context.Context, name string, callbacks GameCallbacks) (Session, error) {
 	req := &pb.RegisterRequest{
 		Name: name,
 	}
 	resp, err := c.client.Register(ctx, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	c.playerId = resp.GetPlayerId()
-	c.callbacks = callbacks
-	return nil
+	return &session{client: c.client, playerId: resp.GetPlayerId(), callbacks: callbacks, verbose: c.verbose}, nil
+}
+
+type session struct {
+	client    pb.CardGameServiceClient
+	playerId  string
+	callbacks GameCallbacks
+	verbose   bool
 }
 
 type GameSummary struct {
@@ -276,30 +288,30 @@ func (c *connection) ListGames(ctx context.Context, phase ...GamePhase) ([]GameS
 	return games, nil
 }
 
-func (c *connection) JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error) {
-	return c.JoinGame(ctx, wg, gameId, pb.JoinGameRequest_AsPlayer)
+func (s *session) JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error) {
+	return s.JoinGame(ctx, wg, gameId, pb.JoinGameRequest_AsPlayer)
 }
-func (c *connection) JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error) {
-	return c.JoinGame(ctx, wg, gameId, pb.JoinGameRequest_AsObserver)
+func (s *session) JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error) {
+	return s.JoinGame(ctx, wg, gameId, pb.JoinGameRequest_AsObserver)
 }
-func (c *connection) JoinGame(ctx context.Context, wg *sync.WaitGroup, gameId string, mode pb.JoinGameRequest_Mode) (string, error) {
+func (s *session) JoinGame(ctx context.Context, wg *sync.WaitGroup, gameId string, mode pb.JoinGameRequest_Mode) (string, error) {
 	joinReq := &pb.JoinGameRequest{
-		PlayerId: c.playerId,
+		PlayerId: s.playerId,
 		GameId:   gameId,
 		Mode:     mode,
 	}
-	joinResp, err := c.client.JoinGame(ctx, joinReq)
+	joinResp, err := s.client.JoinGame(ctx, joinReq)
 	if err != nil {
 		return "", err
 	}
 	activityReq := &pb.GameActivityRequest{
-		PlayerId: c.playerId,
+		PlayerId: s.playerId,
 	}
-	activityStream, err := c.client.ListenForGameActivity(ctx, activityReq)
+	activityStream, err := s.client.ListenForGameActivity(ctx, activityReq)
 	if err != nil {
 		return "", err
 	}
-	go c.processActivity(wg, activityStream)
+	go s.processActivity(wg, activityStream)
 	return joinResp.GetGameId(), nil
 }
 
@@ -314,34 +326,39 @@ func isConnClosedErr(err error) bool {
 	return errContainsConnResetMsg || errContainsEOFMsg || err == io.EOF
 }
 
-func (c *connection) processActivity(wg *sync.WaitGroup, activityStream pb.CardGameService_ListenForGameActivityClient) {
+func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGameService_ListenForGameActivityClient) {
 	for {
 		activity, err := activityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
-			c.callbacks.HandleConnectionError(fmt.Errorf("Connection to server closed"))
+			s.callbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
 			break
 		}
 		if err != nil {
 			log.Fatalf("ListenForGameActivity(_) = _, %v", err)
 		}
-		if c.verbose {
+		if s.verbose {
 			log.Println(activity)
 		}
 		switch a := activity.Type.(type) {
 		case *pb.GameActivityResponse_PlayerJoined_:
 			pj := a.PlayerJoined
-			err = c.callbacks.HandlePlayerJoined(pj.GetName(), pj.GetGameId())
+			err = s.callbacks.HandlePlayerJoined(s, pj.GetName(), pj.GetGameId())
 		case *pb.GameActivityResponse_PlayerLeft_:
 			pl := a.PlayerLeft
-			err = c.callbacks.HandlePlayerLeft(pl.GetName(), pl.GetGameId())
+			err = s.callbacks.HandlePlayerLeft(s, pl.GetName(), pl.GetGameId())
 		case *pb.GameActivityResponse_GameStarted_:
-			err = c.callbacks.HandleGameStarted()
+			err = s.callbacks.HandleGameStarted(s)
 		case *pb.GameActivityResponse_YourTurn_:
-			err = c.callbacks.HandleYourTurn()
+			err = s.callbacks.HandleYourTurn(s)
+		case *pb.GameActivityResponse_TrickCompleted_:
+			tc := a.TrickCompleted
+			if trick, err := cards.ParseCards(tc.GetTrick()); err == nil {
+				err = s.callbacks.HandleTrickCompleted(s, trick, tc.GetTrickWinnerId(), tc.GetTrickWinnerName())
+			}
 		case *pb.GameActivityResponse_GameFinished_:
-			err = c.callbacks.HandleGameFinished()
+			err = s.callbacks.HandleGameFinished(s)
 		case *pb.GameActivityResponse_GameAborted_:
-			err = c.callbacks.HandleGameAborted()
+			err = s.callbacks.HandleGameAborted(s)
 		}
 		if err != nil {
 			log.Printf("Error handling activity: %v\n", err)
@@ -351,28 +368,28 @@ func (c *connection) processActivity(wg *sync.WaitGroup, activityStream pb.CardG
 	wg.Done()
 }
 
-func (c *connection) LeaveGame(ctx context.Context) error {
+func (s *session) LeaveGame(ctx context.Context) error {
 	req := &pb.LeaveGameRequest{
-		PlayerId: c.playerId,
+		PlayerId: s.playerId,
 	}
-	_, err := c.client.LeaveGame(ctx, req)
+	_, err := s.client.LeaveGame(ctx, req)
 	return err
 }
 
-func (c *connection) GetGameStateForGameId(ctx context.Context, gameId string) (GameState, error) {
+func (c *connection) GetGameState(ctx context.Context, gameId string) (GameState, error) {
 	req := &pb.GameStateRequest{
 		Type: &pb.GameStateRequest_GameId{GameId: gameId},
 	}
-	return c.getGameState(ctx, req)
+	return getGameState(ctx, c.client, req)
 }
-func (c *connection) GetGameState(ctx context.Context) (GameState, error) {
+func (s *session) GetGameState(ctx context.Context) (GameState, error) {
 	req := &pb.GameStateRequest{
-		Type: &pb.GameStateRequest_PlayerId{PlayerId: c.playerId},
+		Type: &pb.GameStateRequest_PlayerId{PlayerId: s.playerId},
 	}
-	return c.getGameState(ctx, req)
+	return getGameState(ctx, s.client, req)
 }
-func (c *connection) getGameState(ctx context.Context, req *pb.GameStateRequest) (GameState, error) {
-	resp, err := c.client.GetGameState(ctx, req)
+func getGameState(ctx context.Context, client pb.CardGameServiceClient, req *pb.GameStateRequest) (GameState, error) {
+	resp, err := client.GetGameState(ctx, req)
 	if err != nil {
 		return GameState{}, err
 	}
@@ -430,16 +447,16 @@ func toPlayerState(p *pb.GameState_Player) (PlayerState, error) {
 	}, nil
 }
 
-func (c *connection) PlayCard(ctx context.Context, card cards.Card) error {
+func (s *session) PlayCard(ctx context.Context, card cards.Card) error {
 	req := &pb.PlayerActionRequest{
-		PlayerId: c.playerId,
+		PlayerId: s.playerId,
 		Type: &pb.PlayerActionRequest_PlayCard{
 			PlayCard: &pb.PlayCardAction{
 				Card: card.String(),
 			},
 		},
 	}
-	status, err := c.client.PlayerAction(ctx, req)
+	status, err := s.client.PlayerAction(ctx, req)
 	if err != nil {
 		return err
 	}
