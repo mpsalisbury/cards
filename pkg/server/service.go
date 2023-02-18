@@ -10,6 +10,7 @@ import (
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	"github.com/mpsalisbury/cards/pkg/game"
+	"github.com/mpsalisbury/cards/pkg/game/hearts"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
 )
 
@@ -19,6 +20,10 @@ func NewCardGameService() pb.CardGameServiceServer {
 		games:   make(map[string]game.Game),
 	}
 }
+
+// ListPlayers
+// ClosePlayerSession
+//	delete(s.players, playerId)
 
 type cardGameService struct {
 	pb.UnimplementedCardGameServiceServer
@@ -34,6 +39,7 @@ type playerSession struct {
 	name   string
 	gameId string
 	ch     chan activityReport
+	// lastActivityTimestamp - for tracking dead sessions.
 }
 
 func (*cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.PingResponse, error) {
@@ -71,7 +77,7 @@ func (s *cardGameService) newGameId() string {
 }
 func (s *cardGameService) addGame() game.Game {
 	gameId := s.newGameId()
-	g := game.NewHeartsGame(gameId)
+	g := hearts.NewGame(gameId)
 	s.games[gameId] = g
 	return g
 }
@@ -82,7 +88,6 @@ func (s *cardGameService) removePlayer(playerId string) error {
 	if !ok {
 		return fmt.Errorf("can't find player %s", playerId)
 	}
-	delete(s.players, playerId)
 	if game, found := s.games[player.gameId]; found {
 		err := game.RemovePlayer(playerId)
 		if err != nil {
@@ -91,7 +96,9 @@ func (s *cardGameService) removePlayer(playerId string) error {
 			s.ReportGameAborted()
 			s.scheduleRemoveGame(game.Id())
 		} else {
+			player.gameId = ""
 			s.ReportPlayerLeft(playerId, game.Id())
+			// How to stop listener here.
 		}
 	}
 	return nil
@@ -189,7 +196,7 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 		s.ReportPlayerJoined(player.name, gameId)
 		if g.StartIfReady() {
 			s.ReportGameStarted()
-			s.reportNextTurn(g)
+			s.ReportYourTurn(g.NextPlayerId())
 		}
 	}
 	return &pb.JoinGameResponse{GameId: gameId}, nil
@@ -265,7 +272,7 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 		return err
 	}
 	if g.Phase() != game.Completed {
-		s.reportNextTurn(g)
+		s.ReportYourTurn(g.NextPlayerId())
 	} else {
 		s.ReportGameFinished()
 		s.scheduleRemoveGame(g.Id())
@@ -280,7 +287,7 @@ func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, res
 	ch := make(chan activityReport, 4)
 	s.players[playerId].ch = ch
 	s.mu.Unlock()
-	err := reportActivity(ch, resp)
+	err := reportActivityToListener(ch, resp)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.players[playerId].ch = nil
@@ -290,13 +297,13 @@ func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, res
 
 // Broadcasts message to all clients.
 func (s *cardGameService) BroadcastMessage(msg string) {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_BroadcastMsg{BroadcastMsg: msg},
 		})
 }
 func (s *cardGameService) ReportPlayerJoined(name string, gameId string) {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerJoined_{
 				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: gameId},
@@ -304,7 +311,7 @@ func (s *cardGameService) ReportPlayerJoined(name string, gameId string) {
 		})
 }
 func (s *cardGameService) ReportPlayerLeft(name string, gameId string) {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerLeft_{
 				PlayerLeft: &pb.GameActivityResponse_PlayerLeft{Name: name, GameId: gameId},
@@ -312,48 +319,41 @@ func (s *cardGameService) ReportPlayerLeft(name string, gameId string) {
 		})
 }
 func (s *cardGameService) ReportGameStarted() {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameStarted_{},
 		})
 }
 func (s *cardGameService) ReportCardPlayed() {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_CardPlayed_{},
 		})
 }
 func (s *cardGameService) ReportTrickCompleted() {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_TrickCompleted_{},
 		})
 }
 func (s *cardGameService) ReportGameFinished() {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameFinished_{},
 		})
 }
 func (s *cardGameService) ReportGameAborted() {
-	s.reportActivity(
+	s.reportActivityToAll(
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameAborted_{},
 		})
 }
-func (s *cardGameService) reportActivity(activity activityReport) {
+func (s *cardGameService) reportActivityToAll(activity activityReport) {
 	for _, p := range s.players {
 		if p.ch != nil {
 			p.ch <- activity
 		}
 	}
-}
-func (s *cardGameService) reportNextTurn(g game.Game) {
-	if g.Phase() != game.Playing {
-		log.Print("Can't report next turn for game not in state Playing")
-		return
-	}
-	s.ReportYourTurn(g.NextPlayerId())
 }
 func (s *cardGameService) ReportYourTurn(pId string) {
 	sess, ok := s.players[pId]
@@ -367,20 +367,29 @@ func (s *cardGameService) ReportYourTurn(pId string) {
 	sess.ch <- yourTurn
 }
 
-func reportActivity(activityCh chan activityReport, server pb.CardGameService_ListenForGameActivityServer) error {
+func reportActivityToListener(activityCh chan activityReport, listener pb.CardGameService_ListenForGameActivityServer) error {
 	for {
 		select {
 		case activity := <-activityCh:
-			err := server.Send(activity)
+			err := listener.Send(activity)
 			if err != nil {
 				return err
 			}
-			if _, isFinished := activity.Type.(*pb.GameActivityResponse_GameFinished_); isFinished {
+			shouldStopListening := func() bool {
+				switch activity.Type.(type) {
+				case *pb.GameActivityResponse_GameFinished_,
+					*pb.GameActivityResponse_GameAborted_:
+					return true
+				default:
+					return false
+				}
+			}()
+			if shouldStopListening {
 				// Game is over. Close this reporting request.
 				return nil
 			}
-		case <-server.Context().Done():
-			return server.Context().Err()
+		case <-listener.Context().Done():
+			return listener.Context().Err()
 		}
 	}
 }

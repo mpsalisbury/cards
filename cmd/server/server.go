@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/mpsalisbury/cards/internal/game/proto"
-	"github.com/mpsalisbury/cards/internal/game/server"
+	pb "github.com/mpsalisbury/cards/pkg/proto"
+	"github.com/mpsalisbury/cards/pkg/server"
 )
 
 func main() {

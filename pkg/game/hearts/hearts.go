@@ -1,19 +1,19 @@
-package game
+package hearts
 
 import (
 	"fmt"
 	"log"
-	"math/rand"
 
 	"github.com/mpsalisbury/cards/pkg/cards"
+	"github.com/mpsalisbury/cards/pkg/game"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
 	"golang.org/x/exp/slices"
 )
 
-func NewHeartsGame(gameId string) Game {
+func NewGame(gameId string) game.Game {
 	return &heartsGame{
 		id:           gameId,
-		phase:        Preparing,
+		phase:        game.Preparing,
 		players:      make(map[string]*player),
 		currentTrick: &trick{},
 	}
@@ -21,7 +21,7 @@ func NewHeartsGame(gameId string) Game {
 
 type heartsGame struct {
 	id              string
-	phase           GamePhase
+	phase           game.GamePhase
 	players         map[string]*player // Keyed by playerId
 	playerOrder     []string           // by playerId
 	currentTrick    *trick
@@ -32,11 +32,11 @@ type heartsGame struct {
 func (g heartsGame) Id() string {
 	return g.id
 }
-func (g heartsGame) Phase() GamePhase {
+func (g heartsGame) Phase() game.GamePhase {
 	return g.phase
 }
 func (g *heartsGame) Abort() {
-	g.phase = Aborted
+	g.phase = game.Aborted
 }
 
 func (g heartsGame) PlayerNames() []string {
@@ -93,7 +93,7 @@ func (g *heartsGame) RemovePlayer(playerId string) error {
 	if !g.containsPlayer(playerId) {
 		return nil
 	}
-	if g.phase != Preparing {
+	if g.phase != game.Preparing {
 		return fmt.Errorf("can't remove player from game in Preparing phase.")
 	}
 	delete(g.players, playerId)
@@ -129,7 +129,7 @@ func (g *heartsGame) allPlayersInOrder(playerId string) []*player {
 
 // Returns true if started.
 func (g *heartsGame) StartIfReady() bool {
-	if g.phase != Preparing {
+	if g.phase != game.Preparing {
 		return false
 	}
 	log.Printf("Game %s - numPlayers %d", g.id, len(g.players))
@@ -141,9 +141,21 @@ func (g *heartsGame) StartIfReady() bool {
 		playerId := g.playerOrder[i]
 		g.players[playerId].cards = h
 	}
-	g.nextPlayerIndex = rand.Intn(4)
-	g.phase = Playing
+	g.nextPlayerIndex = g.findPlayerIndexWithCard(cards.ParseCardOrDie("2c"))
+	g.phase = game.Playing
 	return true
+}
+func (g heartsGame) findPlayerIndexWithCard(fc cards.Card) int {
+	for i, pid := range g.playerOrder {
+		p := g.players[pid]
+		for _, c := range p.cards {
+			if c == fc {
+				return i
+			}
+		}
+	}
+	log.Fatalf("Unable to find player with card %s", fc)
+	return 0
 }
 
 func (g heartsGame) NextPlayerId() string {
@@ -152,7 +164,7 @@ func (g heartsGame) NextPlayerId() string {
 
 func (g heartsGame) GetGameState(playerId string) (*pb.GameState, error) {
 	_, requesterIsPlayer := g.players[playerId]
-	if g.phase != Playing && g.phase != Completed {
+	if g.phase != game.Playing && g.phase != game.Completed {
 		return &pb.GameState{Phase: g.phase.ToProto()}, nil
 	}
 	players := []*pb.GameState_Player{}
@@ -207,15 +219,18 @@ func (g heartsGame) playerState(p *player, hideOther bool) *pb.GameState_Player 
 	return ps
 }
 
-func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r Reporter) error {
+func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Reporter) error {
+	if playerId != g.NextPlayerId() {
+		return fmt.Errorf("it is not player %s's turn", playerId)
+	}
 	p, ok := g.players[playerId]
 	if !ok {
-		return fmt.Errorf("player not found for game %s in playerId %s", g.Id, playerId)
+		return fmt.Errorf("player not found for game %s in playerId %s", g.id, playerId)
 	}
 	if !slices.Contains(p.cards, card) {
 		return fmt.Errorf("player %s does not have card %s", p.playerId, card)
 	}
-	if !isValidCardForTrick(card, g.currentTrick.cards, p.cards, g.heartsBroken) {
+	if !isValidCardForTrick(card, g.currentTrick.cards, p.cards, len(p.tricks) == 0, g.heartsBroken) {
 		return fmt.Errorf("player %s cannot play card %s", p.playerId, card)
 	}
 	if card.Suit == cards.Hearts {
@@ -241,12 +256,17 @@ func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r Reporter
 
 	// If next player has no more cards, we're done.
 	if len(g.players[g.playerOrder[g.nextPlayerIndex]].cards) == 0 {
-		g.phase = Completed
+		g.phase = game.Completed
 	}
 	return nil
 }
 
-func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, heartsBroken bool) bool {
+func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, isFirstTrick, heartsBroken bool) bool {
+	// For first trick, must lead 2c.
+	if isFirstTrick && len(trick) == 0 {
+		return card == cards.ParseCardOrDie("2c")
+	}
+
 	// Can play any lead card unless hearts haven't been broken.
 	if len(trick) == 0 {
 		if card.Suit != cards.Hearts {

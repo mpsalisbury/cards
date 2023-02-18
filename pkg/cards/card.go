@@ -2,6 +2,7 @@ package cards
 
 import (
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -158,6 +159,13 @@ func (c Card) String() string {
 	return c.Value.String() + c.Suit.String()
 }
 
+func ParseCardOrDie(cs string) Card {
+	c, err := ParseCard(cs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return c
+}
 func ParseCard(c string) (Card, error) {
 	if len(c) != 2 {
 		return Card{}, fmt.Errorf("can't parse card '%s'", c)

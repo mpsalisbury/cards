@@ -11,6 +11,7 @@ import (
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
+	"github.com/mpsalisbury/cards/pkg/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,6 +27,7 @@ type ServerType uint8
 const (
 	LocalServer ServerType = iota
 	HostedServer
+	InProcessServer
 )
 
 var configs = map[ServerType]struct {
@@ -37,6 +39,24 @@ var configs = map[ServerType]struct {
 }
 
 func Connect(stype ServerType, verbose bool) (Connection, error) {
+	conn, client, err := createClient(stype)
+	if err != nil {
+		return nil, err
+	}
+	return &connection{conn: conn, client: client, verbose: verbose}, nil
+}
+
+func createClient(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
+	switch stype {
+	case LocalServer, HostedServer:
+		return createExternalServer(stype)
+	case InProcessServer:
+		return createInProcessServer()
+	}
+	return nil, nil, fmt.Errorf("server type %v not supported", stype)
+}
+
+func createExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
 	config := configs[stype]
 
 	cred := func() credentials.TransportCredentials {
@@ -49,10 +69,13 @@ func Connect(stype ServerType, verbose bool) (Connection, error) {
 	}()
 	conn, err := grpc.Dial(config.serverAddr, grpc.WithTransportCredentials(cred))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	client := pb.NewCardGameServiceClient(conn)
-	return &connection{conn: conn, client: client, verbose: verbose}, nil
+	return conn, client, nil
+}
+func createInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error) {
+	return nil, newInProcessServer(), nil
 }
 
 type Connection interface {
@@ -204,7 +227,10 @@ type connection struct {
 }
 
 func (c *connection) Close() {
-	c.conn.Close()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
 }
 
 func (c *connection) Register(ctx context.Context, name string, callbacks GameCallbacks) error {
@@ -421,4 +447,48 @@ func (c *connection) PlayCard(ctx context.Context, card cards.Card) error {
 		return fmt.Errorf("%v", status.Error)
 	}
 	return nil
+}
+
+func newInProcessServer() pb.CardGameServiceClient {
+	return &inProcessServer{server: server.NewCardGameService()}
+}
+
+type inProcessServer struct {
+	server pb.CardGameServiceServer
+}
+
+func (s inProcessServer) Ping(ctx context.Context, in *pb.PingRequest, opts ...grpc.CallOption) (*pb.PingResponse, error) {
+	return s.server.Ping(ctx, in)
+}
+func (s inProcessServer) Register(ctx context.Context, in *pb.RegisterRequest, opts ...grpc.CallOption) (*pb.RegisterResponse, error) {
+	return s.server.Register(ctx, in)
+}
+func (s inProcessServer) ListGames(ctx context.Context, in *pb.ListGamesRequest, opts ...grpc.CallOption) (*pb.ListGamesResponse, error) {
+	return s.server.ListGames(ctx, in)
+}
+func (s inProcessServer) JoinGame(ctx context.Context, in *pb.JoinGameRequest, opts ...grpc.CallOption) (*pb.JoinGameResponse, error) {
+	return s.server.JoinGame(ctx, in)
+}
+func (s inProcessServer) LeaveGame(ctx context.Context, in *pb.LeaveGameRequest, opts ...grpc.CallOption) (*pb.LeaveGameResponse, error) {
+	return s.server.LeaveGame(ctx, in)
+}
+func (s inProcessServer) GetGameState(ctx context.Context, in *pb.GameStateRequest, opts ...grpc.CallOption) (*pb.GameState, error) {
+	return s.server.GetGameState(ctx, in)
+}
+func (s inProcessServer) PlayerAction(ctx context.Context, in *pb.PlayerActionRequest, opts ...grpc.CallOption) (*pb.Status, error) {
+	return s.server.PlayerAction(ctx, in)
+}
+func (s inProcessServer) ListenForGameActivity(ctx context.Context, in *pb.GameActivityRequest, opts ...grpc.CallOption) (pb.CardGameService_ListenForGameActivityClient, error) {
+	return nil, fmt.Errorf("Listen not implemented")
+	/*
+				service := &listenService{ch: make(chan *pb.GameActivityResponse)}
+				err := s.server.ListenForGameActivity(in, service)
+				if err != nil {
+					return nil, err
+				}
+				return service, nil
+		type listenService struct {
+			ch chan *pb.GameActivityResponse
+		}
+	*/
 }
