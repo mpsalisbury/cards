@@ -5,22 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"sync"
-	"time"
 
 	"github.com/mpsalisbury/cards/pkg/client"
+	"github.com/mpsalisbury/cards/pkg/game/hearts"
 )
 
 var (
 	gameId  = flag.String("game", "", "Game to join")
 	joinAny = flag.Bool("joinany", false, "Join any available game")
 	verbose = flag.Bool("verbose", false, "Print extra information during the session")
+	name    = flag.String("name", "", "Your player name")
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 func main() {
 	flag.Parse()
 	err := RunPlayer()
@@ -44,8 +41,7 @@ func RunPlayer() error {
 		}
 	}
 	ctx := context.Background()
-	name := fmt.Sprintf("Henry%04d", rand.Intn(10000))
-	session, err := conn.Register(ctx, name, callbacks{})
+	session, err := conn.Register(ctx, *name, callbacks{logic: hearts.NewRandomPlayer()})
 	if err != nil {
 		return fmt.Errorf("couldn't register with server: %v", err)
 	}
@@ -89,6 +85,7 @@ func chooseGame(conn client.Connection) (string, error) {
 // client.GameCallbacks
 type callbacks struct {
 	client.UnimplementedGameCallbacks
+	logic client.GameCallbacks
 }
 
 func (callbacks) HandlePlayerJoined(s client.Session, name string, gameId string) error {
@@ -130,20 +127,5 @@ func showGameState(s client.Session) {
 }
 
 func (c callbacks) HandleYourTurn(s client.Session) error {
-	ctx := context.Background()
-	log.Println("Performing turn")
-	gameState, err := s.GetGameState(ctx)
-	if err != nil {
-		return fmt.Errorf("couldn't get game state: %v", err)
-	}
-	for _, card := range gameState.Players[0].Cards {
-		log.Printf("Trying card %s", card)
-		err = s.PlayCard(ctx, card)
-		if err == nil {
-			log.Printf("  success")
-			// Successful play, we're done.
-			break
-		}
-	}
-	return nil
+	return c.logic.HandleYourTurn(s)
 }

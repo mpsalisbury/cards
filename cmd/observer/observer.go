@@ -5,10 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"sync"
-	"time"
 
+	"github.com/mpsalisbury/cards/pkg/cards"
 	"github.com/mpsalisbury/cards/pkg/client"
 )
 
@@ -16,11 +15,9 @@ var (
 	//	logger     = log.New(os.Stdout, "", 0)
 	gameId  = flag.String("game", "", "Game to observe")
 	verbose = flag.Bool("verbose", false, "Print extra information during the session")
+	name    = flag.String("name", "", "Your observer name")
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 func main() {
 	flag.Parse()
 
@@ -43,8 +40,7 @@ func main() {
 		return
 	}
 
-	name := fmt.Sprintf("Observer%04d", rand.Intn(10000))
-	session, err := conn.Register(ctx, name, callbacks{})
+	session, err := conn.Register(ctx, *name, callbacks{})
 	if err != nil {
 		log.Fatalf("Couldn't register with server: %v", err)
 	}
@@ -112,7 +108,7 @@ func (c callbacks) showGameState(s client.Session) {
 	fmt.Printf("%v\n", gameState)
 }
 
-func (c callbacks) HandleTrickCompleted(s client.Session) error {
+func (c callbacks) HandleTrickCompleted(s client.Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
 	ctx := context.Background()
 	gameState, err := s.GetGameState(ctx)
 	if err != nil {

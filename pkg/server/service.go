@@ -195,6 +195,7 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 		g.AddPlayer(player.name, player.id)
 		s.ReportPlayerJoined(g, player.name)
 		if g.StartIfReady() {
+			// TODO: Replace with repeated client ping waiting for ready.
 			timer := time.NewTimer(100 * time.Millisecond) // Hack - give last player time to register listener.
 			go func() {
 				<-timer.C

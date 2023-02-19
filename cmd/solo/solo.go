@@ -12,6 +12,7 @@ import (
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	"github.com/mpsalisbury/cards/pkg/client"
+	"github.com/mpsalisbury/cards/pkg/game/hearts"
 )
 
 var (
@@ -56,7 +57,7 @@ func RunPlayer() error {
 }
 
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) (string, error) {
-	return startPlayer(conn, wg, "", gameId, autoplayCallbacks{})
+	return startPlayer(conn, wg, "", gameId, hearts.NewRandomPlayer())
 }
 func startCmdlinePlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	_, err := startPlayer(conn, wg, *name, gameId, cmdlineCallbacks{})
@@ -74,26 +75,6 @@ func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId
 	}
 	wg.Add(1)
 	return gameId, nil
-}
-
-// client.GameCallbacks
-type autoplayCallbacks struct {
-	client.UnimplementedGameCallbacks
-}
-
-func (c autoplayCallbacks) HandleYourTurn(s client.Session) error {
-	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx)
-	if err != nil {
-		return fmt.Errorf("couldn't get game state: %v", err)
-	}
-	for _, card := range gameState.Players[0].Cards {
-		err = s.PlayCard(ctx, card)
-		if err == nil {
-			break
-		}
-	}
-	return nil
 }
 
 // client.GameCallbacks

@@ -11,7 +11,6 @@ import (
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
-	"github.com/mpsalisbury/cards/pkg/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -27,7 +26,8 @@ type ServerType uint8
 const (
 	LocalServer ServerType = iota
 	HostedServer
-	InProcessServer
+
+//	InProcessServer
 )
 
 var configs = map[ServerType]struct {
@@ -50,8 +50,8 @@ func createClient(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient,
 	switch stype {
 	case LocalServer, HostedServer:
 		return createExternalServer(stype)
-	case InProcessServer:
-		return createInProcessServer()
+		//	case InProcessServer:
+		//		return createInProcessServer()
 	}
 	return nil, nil, fmt.Errorf("server type %v not supported", stype)
 }
@@ -74,9 +74,10 @@ func createExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameServic
 	client := pb.NewCardGameServiceClient(conn)
 	return conn, client, nil
 }
-func createInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error) {
-	return nil, newInProcessServer(), nil
-}
+
+// func createInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error) {
+// 	return nil, newInProcessServer(), nil
+// }
 
 type Connection interface {
 	Close()
@@ -488,6 +489,7 @@ func (s *session) PlayCard(ctx context.Context, card cards.Card) error {
 	return nil
 }
 
+/*
 func newInProcessServer() pb.CardGameServiceClient {
 	return &inProcessServer{server: server.NewCardGameService()}
 }
@@ -519,15 +521,14 @@ func (s inProcessServer) PlayerAction(ctx context.Context, in *pb.PlayerActionRe
 }
 func (s inProcessServer) ListenForGameActivity(ctx context.Context, in *pb.GameActivityRequest, opts ...grpc.CallOption) (pb.CardGameService_ListenForGameActivityClient, error) {
 	return nil, fmt.Errorf("Listen not implemented")
-	/*
-				service := &listenService{ch: make(chan *pb.GameActivityResponse)}
-				err := s.server.ListenForGameActivity(in, service)
-				if err != nil {
-					return nil, err
-				}
-				return service, nil
-		type listenService struct {
-			ch chan *pb.GameActivityResponse
-		}
-	*/
+		// 		service := &listenService{ch: make(chan *pb.GameActivityResponse)}
+		// 		err := s.server.ListenForGameActivity(in, service)
+		// 		if err != nil {
+		// 			return nil, err
+		// 		}
+		// 		return service, nil
+		// type listenService struct {
+		// 	ch chan *pb.GameActivityResponse
+		// }
 }
+*/
