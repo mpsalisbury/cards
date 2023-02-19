@@ -12,14 +12,11 @@ import (
 )
 
 func main() {
-	log.Printf("game: starting server...")
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "50051"
-		log.Printf("Defaulting to port %s", port)
 	}
-
+	log.Printf("Listening on port %s", port)
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("net.Listen: %v", err)

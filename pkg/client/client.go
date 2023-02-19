@@ -85,6 +85,7 @@ type Connection interface {
 	GetGameState(ctx context.Context, gameId string) (GameState, error)
 }
 type Session interface {
+	GetPlayerId() string
 	JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	LeaveGame(ctx context.Context) error
@@ -182,13 +183,24 @@ func protoToPhase(phase pb.GameState_Phase) GamePhase {
 	}
 }
 
+func (gs GameState) GetPlayerState(id string) (PlayerState, error) {
+	for _, ps := range gs.Players {
+		if id == ps.Id {
+			return ps, nil
+		}
+	}
+	return PlayerState{}, fmt.Errorf("no such player id %s", id)
+}
+
 type PlayerState struct {
+	Id         string
 	Name       string
 	Cards      cards.Cards
 	NumCards   int
 	Tricks     []cards.Cards
 	NumTricks  int
 	TrickScore int
+	HandScore  int
 }
 
 func (g GameState) String() string {
@@ -196,7 +208,7 @@ func (g GameState) String() string {
 	sb.WriteString(fmt.Sprintf("Game Phase: %s\n", g.Phase))
 	if g.Phase != Preparing {
 		for _, p := range g.Players {
-			sb.WriteString(p.String())
+			sb.WriteString(p.String(g.Phase == Completed))
 		}
 		if len(g.CurrentTrick) > 0 {
 			sb.WriteString(fmt.Sprintf("Current Trick: %s", g.CurrentTrick))
@@ -205,7 +217,7 @@ func (g GameState) String() string {
 	return sb.String()
 }
 
-func (p PlayerState) String() string {
+func (p PlayerState) String(isCompleted bool) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Name: %s\n", p.Name))
 	if len(p.Cards) > 0 {
@@ -221,7 +233,9 @@ func (p PlayerState) String() string {
 	} else {
 		sb.WriteString(fmt.Sprintf("Num Tricks Taken: %d\n", p.NumTricks))
 	}
-	if p.TrickScore > 0 {
+	if isCompleted {
+		sb.WriteString(fmt.Sprintf("Hand Score: %d\n", p.HandScore))
+	} else {
 		sb.WriteString(fmt.Sprintf("Trick Score: %d\n", p.TrickScore))
 	}
 	return sb.String()
@@ -241,6 +255,9 @@ func (c *connection) Close() {
 }
 
 func (c *connection) Register(ctx context.Context, name string, callbacks GameCallbacks) (Session, error) {
+	if name == "" {
+		name = chooseRandomName()
+	}
 	req := &pb.RegisterRequest{
 		Name: name,
 	}
@@ -288,6 +305,9 @@ func (c *connection) ListGames(ctx context.Context, phase ...GamePhase) ([]GameS
 	return games, nil
 }
 
+func (s *session) GetPlayerId() string {
+	return s.playerId
+}
 func (s *session) JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error) {
 	return s.JoinGame(ctx, wg, gameId, pb.JoinGameRequest_AsPlayer)
 }
@@ -438,12 +458,14 @@ func toPlayerState(p *pb.GameState_Player) (PlayerState, error) {
 		tricks = append(tricks, ts)
 	}
 	return PlayerState{
+		Id:         p.GetId(),
 		Name:       p.GetName(),
 		Cards:      cs,
 		NumCards:   int(p.GetNumCards()),
 		Tricks:     tricks,
 		NumTricks:  int(p.GetNumTricks()),
 		TrickScore: int(p.GetTrickScore()),
+		HandScore:  int(p.GetHandScore()),
 	}, nil
 }
 

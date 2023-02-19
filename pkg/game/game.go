@@ -10,6 +10,8 @@ type Game interface {
 	Phase() GamePhase
 	AcceptingMorePlayers() bool
 	AddPlayer(name, playerId string)
+	AddObserver(name, playerId string)
+	ListenerIds() []string
 	PlayerNames() []string
 	NextPlayerId() string
 	RemovePlayer(playerId string) error
@@ -45,13 +47,13 @@ func (ph GamePhase) ToProto() pb.GameState_Phase {
 
 // Report activity back to the players.
 type Reporter interface {
-	ReportPlayerJoined(name string, gameId string)
-	ReportPlayerLeft(name string, gameId string)
-	ReportGameStarted()
-	ReportCardPlayed()
-	ReportTrickCompleted(trick cards.Cards, trickWinnerId, trickWinnerName string)
-	ReportGameFinished()
-	ReportGameAborted()
-	ReportYourTurn(pId string)
-	BroadcastMessage(msg string)
+	ReportPlayerJoined(g Game, name string)
+	ReportPlayerLeft(g Game, name string)
+	ReportGameStarted(g Game)
+	ReportCardPlayed(g Game)
+	ReportTrickCompleted(g Game, trick cards.Cards, trickWinnerId, trickWinnerName string)
+	ReportGameFinished(g Game)
+	ReportGameAborted(g Game)
+	ReportNextTurn(g Game)
+	BroadcastMessage(g Game, msg string)
 }

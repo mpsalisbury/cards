@@ -77,13 +77,15 @@ message GameState{
         Aborted = 4;
     }
     message Player {
-        string name = 1;
-        Cards cards = 2;  // not populated for other players
-        int32 num_cards = 3;
-        repeated Cards tricks = 4;  // not populated for other players
-        int32 num_tricks = 5;
-        int32 trick_score = 6;
-        bool is_next_player = 7; // populated only for players
+        string id = 1;
+        string name = 2;
+        Cards cards = 3;  // not populated for other players
+        int32 num_cards = 4;
+        repeated Cards tricks = 5;  // not populated for other players
+        int32 num_tricks = 6;
+        int32 trick_score = 7;  // sum of scores of all taken tricks
+        bool is_next_player = 8; // populated only for players
+        int32 hand_score = 9;  // after game is Completed, score for this hand (may be different than trick_score).
     }
     message Cards {
         repeated string cards = 1;

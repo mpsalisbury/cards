@@ -88,16 +88,16 @@ func (s *cardGameService) removePlayer(playerId string) error {
 	if !ok {
 		return fmt.Errorf("can't find player %s", playerId)
 	}
-	if game, found := s.games[player.gameId]; found {
-		err := game.RemovePlayer(playerId)
+	if g, found := s.games[player.gameId]; found {
+		err := g.RemovePlayer(playerId)
 		if err != nil {
 			// Can't remove player, abort game
-			game.Abort()
-			s.ReportGameAborted()
-			s.scheduleRemoveGame(game.Id())
+			g.Abort()
+			s.ReportGameAborted(g)
+			s.scheduleRemoveGame(g.Id())
 		} else {
 			player.gameId = ""
-			s.ReportPlayerLeft(playerId, game.Id())
+			s.ReportPlayerLeft(g, playerId)
 			// How to stop listener here.
 		}
 	}
@@ -193,11 +193,18 @@ func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest)
 			return nil, fmt.Errorf("game %s is full", gameId)
 		}
 		g.AddPlayer(player.name, player.id)
-		s.ReportPlayerJoined(player.name, gameId)
+		s.ReportPlayerJoined(g, player.name)
 		if g.StartIfReady() {
-			s.ReportGameStarted()
-			s.ReportYourTurn(g.NextPlayerId())
+			timer := time.NewTimer(100 * time.Millisecond) // Hack - give last player time to register listener.
+			go func() {
+				<-timer.C
+				s.ReportGameStarted(g)
+				s.ReportNextTurn(g)
+			}()
 		}
+	}
+	if req.GetMode() == pb.JoinGameRequest_AsObserver {
+		g.AddObserver(player.name, player.id)
 	}
 	return &pb.JoinGameResponse{GameId: gameId}, nil
 }
@@ -272,9 +279,9 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 		return err
 	}
 	if g.Phase() != game.Completed {
-		s.ReportYourTurn(g.NextPlayerId())
+		s.ReportNextTurn(g)
 	} else {
-		s.ReportGameFinished()
+		s.ReportGameFinished(g)
 		s.scheduleRemoveGame(g.Id())
 	}
 	return nil
@@ -283,7 +290,7 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, resp pb.CardGameService_ListenForGameActivityServer) error {
 	s.mu.Lock()
 	playerId := req.GetPlayerId()
-	log.Printf("ListenForGameActivity from %s - %s\n", playerId, s.players[playerId].name)
+	//log.Printf("ListenForGameActivity from %s - %s\n", playerId, s.players[playerId].name)
 	ch := make(chan activityReport, 4)
 	s.players[playerId].ch = ch
 	s.mu.Unlock()
@@ -296,42 +303,48 @@ func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, res
 }
 
 // Broadcasts message to all clients.
-func (s *cardGameService) BroadcastMessage(msg string) {
+func (s *cardGameService) BroadcastMessage(g game.Game, msg string) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_BroadcastMsg{BroadcastMsg: msg},
 		})
 }
-func (s *cardGameService) ReportPlayerJoined(name string, gameId string) {
+func (s *cardGameService) ReportPlayerJoined(g game.Game, name string) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerJoined_{
-				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: gameId},
+				PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: g.Id()},
 			},
 		})
 }
-func (s *cardGameService) ReportPlayerLeft(name string, gameId string) {
+func (s *cardGameService) ReportPlayerLeft(g game.Game, name string) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_PlayerLeft_{
-				PlayerLeft: &pb.GameActivityResponse_PlayerLeft{Name: name, GameId: gameId},
+				PlayerLeft: &pb.GameActivityResponse_PlayerLeft{Name: name, GameId: g.Id()},
 			},
 		})
 }
-func (s *cardGameService) ReportGameStarted() {
+func (s *cardGameService) ReportGameStarted(g game.Game) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameStarted_{},
 		})
 }
-func (s *cardGameService) ReportCardPlayed() {
+func (s *cardGameService) ReportCardPlayed(g game.Game) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_CardPlayed_{},
 		})
 }
-func (s *cardGameService) ReportTrickCompleted(trick cards.Cards, trickWinnerId, trickWinnerName string) {
+func (s *cardGameService) ReportTrickCompleted(g game.Game, trick cards.Cards, trickWinnerId, trickWinnerName string) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_TrickCompleted_{
 				TrickCompleted: &pb.GameActivityResponse_TrickCompleted{
@@ -342,26 +355,30 @@ func (s *cardGameService) ReportTrickCompleted(trick cards.Cards, trickWinnerId,
 			},
 		})
 }
-func (s *cardGameService) ReportGameFinished() {
+func (s *cardGameService) ReportGameFinished(g game.Game) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameFinished_{},
 		})
 }
-func (s *cardGameService) ReportGameAborted() {
+func (s *cardGameService) ReportGameAborted(g game.Game) {
 	s.reportActivityToAll(
+		g,
 		&pb.GameActivityResponse{
 			Type: &pb.GameActivityResponse_GameAborted_{},
 		})
 }
-func (s *cardGameService) reportActivityToAll(activity activityReport) {
-	for _, p := range s.players {
-		if p.ch != nil {
+func (s *cardGameService) reportActivityToAll(g game.Game, activity activityReport) {
+	for _, pid := range g.ListenerIds() {
+		p, ok := s.players[pid]
+		if ok && p.ch != nil {
 			p.ch <- activity
 		}
 	}
 }
-func (s *cardGameService) ReportYourTurn(pId string) {
+func (s *cardGameService) ReportNextTurn(g game.Game) {
+	pId := g.NextPlayerId()
 	sess, ok := s.players[pId]
 	if !ok {
 		log.Printf("No such playerId %s", pId)
