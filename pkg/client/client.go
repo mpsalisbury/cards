@@ -135,6 +135,7 @@ type GameState struct {
 	Phase        GamePhase
 	Players      []PlayerState
 	CurrentTrick cards.Cards
+	LegalPlays   cards.Cards
 }
 
 type GamePhase int8
@@ -219,6 +220,9 @@ func (g GameState) String() string {
 		}
 		if len(g.CurrentTrick) > 0 {
 			sb.WriteString(fmt.Sprintf("Current Trick: %s", g.CurrentTrick))
+		}
+		if len(g.LegalPlays) > 0 {
+			sb.WriteString(fmt.Sprintf("Legal Plays: %s", g.LegalPlays))
 		}
 	}
 	return sb.String()
@@ -470,11 +474,16 @@ func getGameState(ctx context.Context, client pb.CardGameServiceClient, req *pb.
 	if err != nil {
 		return GameState{}, err
 	}
+	legalPlays, err := cards.ParseCards(resp.GetLegalPlays().GetCards())
+	if err != nil {
+		return GameState{}, err
+	}
 	return GameState{
 		Id:           resp.GetId(),
 		Phase:        phase,
 		Players:      players,
 		CurrentTrick: currentTrick,
+		LegalPlays:   legalPlays,
 	}, nil
 }
 

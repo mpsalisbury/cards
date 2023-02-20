@@ -224,12 +224,14 @@ func (g heartsGame) GetGameState(playerId string) (*pb.GameState, error) {
 		players = append(players, g.playerState(p, hideOtherPlayerState))
 	}
 	currentTrick := g.currentTrick.cards.ToProto()
+	legalPlays := g.legalPlays()
 
 	gs := &pb.GameState{
 		Id:           g.id,
 		Phase:        g.phase.ToProto(),
 		Players:      players,
 		CurrentTrick: currentTrick,
+		LegalPlays:   legalPlays.ToProto(),
 	}
 	return gs, nil
 }
@@ -276,6 +278,24 @@ func trickScore(cs cards.Cards) int {
 		s += cardScore(c)
 	}
 	return s
+}
+func (g heartsGame) legalPlays() cards.Cards {
+	playerId := g.NextPlayerId()
+	p, ok := g.players[playerId]
+	if !ok {
+		log.Fatalf("player %s not found for game %s", playerId, g.id)
+		return cards.Cards{}
+	}
+	isValid := func(c cards.Card) bool {
+		return isValidCardForTrick(c, g.currentTrick.cards, p.cards, g.numTricksPlayed == 0, g.heartsBroken)
+	}
+	var cs cards.Cards
+	for _, c := range p.cards {
+		if isValid(c) {
+			cs = append(cs, c)
+		}
+	}
+	return cs
 }
 
 func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Reporter) error {
