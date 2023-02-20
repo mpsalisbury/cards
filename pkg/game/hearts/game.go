@@ -190,7 +190,7 @@ func (g *heartsGame) StartGame() {
 		playerId := g.playerOrder[i]
 		g.players[playerId].cards = h
 	}
-	g.nextPlayerIndex = g.findPlayerIndexWithCard(cards.ParseCardOrDie("2c"))
+	g.nextPlayerIndex = g.findPlayerIndexWithCard(cards.C2c)
 	g.phase = game.Playing
 }
 func (g heartsGame) findPlayerIndexWithCard(fc cards.Card) int {
@@ -364,7 +364,7 @@ func didSomeoneShootTheMoon(players map[string]*player) bool {
 func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, isFirstTrick, heartsBroken bool) bool {
 	// For first trick, must lead 2c.
 	if isFirstTrick && len(trick) == 0 {
-		return card == cards.ParseCardOrDie("2c")
+		return card == cards.C2c
 	}
 
 	// Can play any lead card unless hearts haven't been broken.

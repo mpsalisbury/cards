@@ -50,7 +50,7 @@ func (c basicPlayer) HandleYourTurn(s client.Session) error {
 //     currentWinningCard
 
 func (c basicPlayer) chooseCard(gs client.GameState) cards.Card {
-	return cards.ParseCardOrDie("2c")
+	return cards.C2c
 	//	hand := gs.Players[0].Cards
 	//	trick := gs.CurrentTrick
 
