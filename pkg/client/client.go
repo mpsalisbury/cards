@@ -89,9 +89,10 @@ type Session interface {
 	GetPlayerId() string
 	JoinGameAsPlayer(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
 	JoinGameAsObserver(ctx context.Context, wg *sync.WaitGroup, gameId string) (string, error)
+	ReadyToStartGame(ctx context.Context) error
 	LeaveGame(ctx context.Context) error
-	GetGameState(ctx context.Context) (GameState, error)
 	PlayCard(ctx context.Context, card cards.Card) error
+	GetGameState(ctx context.Context) (GameState, error)
 }
 
 type GameCallbacks interface {
@@ -389,12 +390,37 @@ func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGame
 	wg.Done()
 }
 
+func (s *session) ReadyToStartGame(ctx context.Context) error {
+	return s.performGameAction(ctx, &pb.GameActionRequest_ReadyToStartGame{})
+}
+
 func (s *session) LeaveGame(ctx context.Context) error {
-	req := &pb.LeaveGameRequest{
+	return s.performGameAction(ctx, &pb.GameActionRequest_LeaveGame{})
+}
+
+func (s *session) PlayCard(ctx context.Context, card cards.Card) error {
+	return s.performGameAction(ctx,
+		&pb.GameActionRequest_PlayCard{
+			PlayCard: &pb.PlayCardAction{
+				Card: card.String(),
+			},
+		},
+	)
+}
+
+func (s *session) performGameAction(ctx context.Context, requestType pb.GameActionRequest_Type) error {
+	req := &pb.GameActionRequest{
 		PlayerId: s.playerId,
+		Type:     requestType,
 	}
-	_, err := s.client.LeaveGame(ctx, req)
-	return err
+	status, err := s.client.GameAction(ctx, req)
+	if err != nil {
+		return err
+	}
+	if status.Code != 0 {
+		return fmt.Errorf("%v", status.Error)
+	}
+	return nil
 }
 
 func (c *connection) GetGameState(ctx context.Context, gameId string) (GameState, error) {
@@ -468,25 +494,6 @@ func toPlayerState(p *pb.GameState_Player) (PlayerState, error) {
 		TrickScore: int(p.GetTrickScore()),
 		HandScore:  int(p.GetHandScore()),
 	}, nil
-}
-
-func (s *session) PlayCard(ctx context.Context, card cards.Card) error {
-	req := &pb.PlayerActionRequest{
-		PlayerId: s.playerId,
-		Type: &pb.PlayerActionRequest_PlayCard{
-			PlayCard: &pb.PlayCardAction{
-				Card: card.String(),
-			},
-		},
-	}
-	status, err := s.client.PlayerAction(ctx, req)
-	if err != nil {
-		return err
-	}
-	if status.Code != 0 {
-		return fmt.Errorf("%v", status.Error)
-	}
-	return nil
 }
 
 /*

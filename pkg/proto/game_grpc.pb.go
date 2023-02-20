@@ -26,9 +26,8 @@ type CardGameServiceClient interface {
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	ListGames(ctx context.Context, in *ListGamesRequest, opts ...grpc.CallOption) (*ListGamesResponse, error)
 	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error)
-	LeaveGame(ctx context.Context, in *LeaveGameRequest, opts ...grpc.CallOption) (*LeaveGameResponse, error)
+	GameAction(ctx context.Context, in *GameActionRequest, opts ...grpc.CallOption) (*Status, error)
 	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error)
-	PlayerAction(ctx context.Context, in *PlayerActionRequest, opts ...grpc.CallOption) (*Status, error)
 	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
 }
 
@@ -76,9 +75,9 @@ func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameReques
 	return out, nil
 }
 
-func (c *cardGameServiceClient) LeaveGame(ctx context.Context, in *LeaveGameRequest, opts ...grpc.CallOption) (*LeaveGameResponse, error) {
-	out := new(LeaveGameResponse)
-	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/LeaveGame", in, out, opts...)
+func (c *cardGameServiceClient) GameAction(ctx context.Context, in *GameActionRequest, opts ...grpc.CallOption) (*Status, error) {
+	out := new(Status)
+	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/GameAction", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,15 +87,6 @@ func (c *cardGameServiceClient) LeaveGame(ctx context.Context, in *LeaveGameRequ
 func (c *cardGameServiceClient) GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error) {
 	out := new(GameState)
 	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/GetGameState", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *cardGameServiceClient) PlayerAction(ctx context.Context, in *PlayerActionRequest, opts ...grpc.CallOption) (*Status, error) {
-	out := new(Status)
-	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/PlayerAction", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -143,9 +133,8 @@ type CardGameServiceServer interface {
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	ListGames(context.Context, *ListGamesRequest) (*ListGamesResponse, error)
 	JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error)
-	LeaveGame(context.Context, *LeaveGameRequest) (*LeaveGameResponse, error)
+	GameAction(context.Context, *GameActionRequest) (*Status, error)
 	GetGameState(context.Context, *GameStateRequest) (*GameState, error)
-	PlayerAction(context.Context, *PlayerActionRequest) (*Status, error)
 	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
 	mustEmbedUnimplementedCardGameServiceServer()
 }
@@ -166,14 +155,11 @@ func (UnimplementedCardGameServiceServer) ListGames(context.Context, *ListGamesR
 func (UnimplementedCardGameServiceServer) JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
 }
-func (UnimplementedCardGameServiceServer) LeaveGame(context.Context, *LeaveGameRequest) (*LeaveGameResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LeaveGame not implemented")
+func (UnimplementedCardGameServiceServer) GameAction(context.Context, *GameActionRequest) (*Status, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GameAction not implemented")
 }
 func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGameState not implemented")
-}
-func (UnimplementedCardGameServiceServer) PlayerAction(context.Context, *PlayerActionRequest) (*Status, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PlayerAction not implemented")
 }
 func (UnimplementedCardGameServiceServer) ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error {
 	return status.Errorf(codes.Unimplemented, "method ListenForGameActivity not implemented")
@@ -263,20 +249,20 @@ func _CardGameService_JoinGame_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CardGameService_LeaveGame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LeaveGameRequest)
+func _CardGameService_GameAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GameActionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CardGameServiceServer).LeaveGame(ctx, in)
+		return srv.(CardGameServiceServer).GameAction(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/cards.proto.CardGameService/LeaveGame",
+		FullMethod: "/cards.proto.CardGameService/GameAction",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CardGameServiceServer).LeaveGame(ctx, req.(*LeaveGameRequest))
+		return srv.(CardGameServiceServer).GameAction(ctx, req.(*GameActionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -295,24 +281,6 @@ func _CardGameService_GetGameState_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(CardGameServiceServer).GetGameState(ctx, req.(*GameStateRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _CardGameService_PlayerAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PlayerActionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(CardGameServiceServer).PlayerAction(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/cards.proto.CardGameService/PlayerAction",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CardGameServiceServer).PlayerAction(ctx, req.(*PlayerActionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -362,16 +330,12 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CardGameService_JoinGame_Handler,
 		},
 		{
-			MethodName: "LeaveGame",
-			Handler:    _CardGameService_LeaveGame_Handler,
+			MethodName: "GameAction",
+			Handler:    _CardGameService_GameAction_Handler,
 		},
 		{
 			MethodName: "GetGameState",
 			Handler:    _CardGameService_GetGameState_Handler,
-		},
-		{
-			MethodName: "PlayerAction",
-			Handler:    _CardGameService_PlayerAction_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

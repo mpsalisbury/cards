@@ -9,9 +9,8 @@ service CardGameService {
     rpc Register(RegisterRequest) returns (RegisterResponse);
     rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
     rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
-    rpc LeaveGame(LeaveGameRequest) returns (LeaveGameResponse);
+    rpc GameAction(GameActionRequest) returns (Status);
     rpc GetGameState(GameStateRequest) returns (GameState);
-    rpc PlayerAction(PlayerActionRequest) returns (Status);
     rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
 }
 
@@ -54,12 +53,22 @@ message JoinGameResponse {
     string game_id = 1;
 }
 
-message LeaveGameRequest {
+message GameActionRequest {
     string player_id = 1;
+// ??    string game_id = 2; 
+    oneof type {
+        ReadyToStartGameAction ready_to_start_game = 3;
+        LeaveGameAction leave_game = 4;
+        PlayCardAction play_card = 5;
+    }
 }
 
-message LeaveGameResponse {
+message ReadyToStartGameAction { }
+message LeaveGameAction { }
+message PlayCardAction {
+    string card = 1;
 }
+
 
 message GameStateRequest {
     oneof type {
@@ -94,17 +103,6 @@ message GameState{
     Phase phase = 2;
     repeated Player players = 3;
     Cards current_trick = 4;
-}
-
-message PlayerActionRequest {
-    string player_id = 1;
-    oneof type {
-        PlayCardAction play_card = 2;
-    }
-}
-
-message PlayCardAction {
-    string card = 2;
 }
 
 message Status {
