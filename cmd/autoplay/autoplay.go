@@ -12,8 +12,13 @@ import (
 )
 
 var (
-	verbose = flag.Bool("verbose", false, "Print extra information during the session")
+	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
+	playerType = "basic"
 )
+
+func init() {
+	hearts.AddPlayerFlag(&playerType, "type")
+}
 
 func main() {
 	flag.Parse()
@@ -47,7 +52,11 @@ func RunPlayers() error {
 
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) (string, error) {
 	ctx := context.Background()
-	session, err := conn.Register(ctx, "", hearts.NewRandomPlayer())
+	player, err := hearts.NewPlayerFromFlag(playerType)
+	if err != nil {
+		return "", fmt.Errorf("couldn't create player: %v", err)
+	}
+	session, err := conn.Register(ctx, "", player)
 	if err != nil {
 		return "", fmt.Errorf("couldn't register with server: %v", err)
 	}

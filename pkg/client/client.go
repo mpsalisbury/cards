@@ -219,7 +219,7 @@ func (g GameState) String() string {
 			sb.WriteString(p.String(g.Phase == Completed))
 		}
 		if len(g.CurrentTrick) > 0 {
-			sb.WriteString(fmt.Sprintf("Current Trick: %s", g.CurrentTrick))
+			sb.WriteString(fmt.Sprintf("Current Trick: %s\n", g.CurrentTrick))
 		}
 		if len(g.LegalPlays) > 0 {
 			sb.WriteString(fmt.Sprintf("Legal Plays: %s", g.LegalPlays))

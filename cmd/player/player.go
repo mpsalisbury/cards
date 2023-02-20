@@ -12,11 +12,16 @@ import (
 )
 
 var (
-	gameId  = flag.String("game", "", "Game to join")
-	joinAny = flag.Bool("joinany", false, "Join any available game")
-	verbose = flag.Bool("verbose", false, "Print extra information during the session")
-	name    = flag.String("name", "", "Your player name")
+	gameId     = flag.String("game", "", "Game to join")
+	joinAny    = flag.Bool("joinany", false, "Join any available game")
+	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
+	name       = flag.String("name", "", "Your player name")
+	playerType = "basic"
 )
+
+func init() {
+	hearts.AddPlayerFlag(&playerType, "type")
+}
 
 func main() {
 	flag.Parse()
@@ -41,7 +46,11 @@ func RunPlayer() error {
 		}
 	}
 	ctx := context.Background()
-	session, err := conn.Register(ctx, *name, callbacks{logic: hearts.NewRandomPlayer()})
+	player, err := hearts.NewPlayerFromFlag(playerType)
+	if err != nil {
+		return fmt.Errorf("couldn't create player: %v", err)
+	}
+	session, err := conn.Register(ctx, *name, callbacks{logic: player})
 	if err != nil {
 		return fmt.Errorf("couldn't register with server: %v", err)
 	}

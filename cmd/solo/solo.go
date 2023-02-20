@@ -16,12 +16,14 @@ import (
 )
 
 var (
-	verbose = flag.Bool("verbose", false, "Print extra information during the session")
-	name    = flag.String("name", "", "Your player name")
+	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
+	name       = flag.String("name", "", "Your player name")
+	playerType = "basic"
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
+	hearts.AddPlayerFlag(&playerType, "type")
 }
 func main() {
 	flag.Parse()
@@ -57,7 +59,11 @@ func RunPlayer() error {
 }
 
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) (string, error) {
-	return startPlayer(conn, wg, "", gameId, hearts.NewRandomPlayer())
+	player, err := hearts.NewPlayerFromFlag(playerType)
+	if err != nil {
+		return "", fmt.Errorf("couldn't create player: %v", err)
+	}
+	return startPlayer(conn, wg, "", gameId, player)
 }
 func startCmdlinePlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	_, err := startPlayer(conn, wg, *name, gameId, cmdlineCallbacks{})
