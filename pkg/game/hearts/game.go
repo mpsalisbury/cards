@@ -3,6 +3,7 @@ package hearts
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	"github.com/mpsalisbury/cards/pkg/game"
@@ -20,15 +21,16 @@ func NewGame(gameId string) game.Game {
 }
 
 type heartsGame struct {
-	id              string
-	phase           game.GamePhase
-	players         map[string]*player // Keyed by playerId
-	playerOrder     []string           // by playerId
-	listenerIds     []string           // all players and observers
-	numTricksPlayed int
-	currentTrick    *trick
-	nextPlayerIndex int // index into playerOrder
-	heartsBroken    bool
+	id               string
+	lastActivityTime time.Time
+	phase            game.GamePhase
+	players          map[string]*player // Keyed by playerId
+	playerOrder      []string           // by playerId
+	listenerIds      []string           // all players and observers
+	numTricksPlayed  int
+	currentTrick     *trick
+	nextPlayerIndex  int // index into playerOrder
+	heartsBroken     bool
 }
 
 func (g heartsGame) Id() string {
@@ -37,7 +39,16 @@ func (g heartsGame) Id() string {
 func (g heartsGame) Phase() game.GamePhase {
 	return g.phase
 }
+func (g heartsGame) GetLastActivityTime() time.Time {
+	return g.lastActivityTime
+}
+
+func (g *heartsGame) touch() {
+	g.lastActivityTime = time.Now()
+}
+
 func (g *heartsGame) Abort() {
+	g.touch()
 	g.phase = game.Aborted
 }
 
@@ -81,24 +92,27 @@ func (g heartsGame) AcceptingMorePlayers() bool {
 }
 
 func (g *heartsGame) AddPlayer(name string, id string) {
+	g.touch()
 	p := &player{id: id, name: name}
 	g.players[id] = p
 	g.playerOrder = append(g.playerOrder, id)
 	g.listenerIds = append(g.listenerIds, id)
 }
 func (g *heartsGame) AddObserver(name string, id string) {
+	g.touch()
 	g.listenerIds = append(g.listenerIds, id)
 }
-func (g *heartsGame) ListenerIds() []string {
+func (g heartsGame) ListenerIds() []string {
 	return g.listenerIds
 }
-func (g *heartsGame) containsPlayer(playerId string) bool {
+func (g heartsGame) containsPlayer(playerId string) bool {
 	_, ok := g.players[playerId]
 	return ok
 }
 
 // Remove player if present
 func (g *heartsGame) RemovePlayer(playerId string) error {
+	g.touch()
 	if !g.containsPlayer(playerId) {
 		return nil
 	}
@@ -119,7 +133,7 @@ func (g *heartsGame) RemovePlayer(playerId string) error {
 
 // Return all players, starting with playerId and following in order.
 // If this playerId isn't a player, observer starts with the first player.
-func (g *heartsGame) allPlayersInOrder(playerId string) []*player {
+func (g heartsGame) allPlayersInOrder(playerId string) []*player {
 	var matchingId = 0
 	for i, pid := range g.playerOrder {
 		if pid == playerId {
@@ -137,7 +151,7 @@ func (g *heartsGame) allPlayersInOrder(playerId string) []*player {
 }
 
 // Returns true if started.
-func (g *heartsGame) StartIfReady() bool {
+func (g heartsGame) IsEnoughPlayersToStart() bool {
 	if g.phase != game.Preparing {
 		return false
 	}
@@ -145,14 +159,39 @@ func (g *heartsGame) StartIfReady() bool {
 	if len(g.players) != 4 {
 		return false
 	}
-	log.Printf("Enough players, initializing game %s", g.id)
+	log.Printf("Enough players, ready to start %s", g.id)
+	return true
+}
+
+func (g *heartsGame) ConfirmPlayerReadyToStart(playerId string) error {
+	g.touch()
+	p, ok := g.players[playerId]
+	if !ok {
+		return fmt.Errorf("no player %s found", playerId)
+	}
+	fmt.Printf("Player %s ready to start\n", playerId)
+	p.isReadyToStart = true
+	return nil
+}
+
+func (g heartsGame) UnconfirmedPlayerIds() []string {
+	var ids []string
+	for _, p := range g.players {
+		if !p.isReadyToStart {
+			ids = append(ids, p.id)
+		}
+	}
+	return ids
+}
+
+func (g *heartsGame) StartGame() {
+	g.touch()
 	for i, h := range cards.Deal(4) {
 		playerId := g.playerOrder[i]
 		g.players[playerId].cards = h
 	}
 	g.nextPlayerIndex = g.findPlayerIndexWithCard(cards.ParseCardOrDie("2c"))
 	g.phase = game.Playing
-	return true
 }
 func (g heartsGame) findPlayerIndexWithCard(fc cards.Card) int {
 	for i, pid := range g.playerOrder {
@@ -196,12 +235,13 @@ func (g heartsGame) GetGameState(playerId string) (*pb.GameState, error) {
 }
 
 type player struct {
-	id         string
-	name       string
-	cards      cards.Cards
-	tricks     []cards.Cards
-	trickScore int // sum of all trick's scores
-	handScore  int // when game is completed.
+	id             string
+	name           string
+	isReadyToStart bool
+	cards          cards.Cards
+	tricks         []cards.Cards
+	trickScore     int // sum of all trick's scores
+	handScore      int // when game is completed.
 }
 
 func (g heartsGame) playerState(p *player, hideOther bool) *pb.GameState_Player {
@@ -239,6 +279,7 @@ func trickScore(cs cards.Cards) int {
 }
 
 func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Reporter) error {
+	g.touch()
 	if playerId != g.NextPlayerId() {
 		return fmt.Errorf("it is not player %s's turn", playerId)
 	}

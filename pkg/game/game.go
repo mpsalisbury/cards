@@ -1,6 +1,8 @@
 package game
 
 import (
+	"time"
+
 	"github.com/mpsalisbury/cards/pkg/cards"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
 )
@@ -8,6 +10,7 @@ import (
 type Game interface {
 	Id() string
 	Phase() GamePhase
+	GetLastActivityTime() time.Time
 	AcceptingMorePlayers() bool
 	AddPlayer(name, playerId string)
 	AddObserver(name, playerId string)
@@ -15,7 +18,10 @@ type Game interface {
 	PlayerNames() []string
 	NextPlayerId() string
 	RemovePlayer(playerId string) error
-	StartIfReady() bool
+	IsEnoughPlayersToStart() bool
+	ConfirmPlayerReadyToStart(playerId string) error
+	UnconfirmedPlayerIds() []string
+	StartGame()
 	GetGameState(playerId string) (*pb.GameState, error)
 	HandlePlayCard(playerId string, card cards.Card, reporter Reporter) error
 	Abort()

@@ -98,6 +98,7 @@ type Session interface {
 type GameCallbacks interface {
 	HandlePlayerJoined(s Session, name string, gameId string) error
 	HandlePlayerLeft(s Session, name string, gameId string) error
+	HandleGameReadyToStart(Session) error
 	HandleGameStarted(Session) error
 	HandleCardPlayed(Session /*currentTrick cards.Cards*/) error
 	HandleYourTurn(Session) error
@@ -113,6 +114,10 @@ func (UnimplementedGameCallbacks) HandlePlayerJoined(s Session, name string, gam
 }
 func (UnimplementedGameCallbacks) HandlePlayerLeft(s Session, name string, gameId string) error {
 	return nil
+}
+func (UnimplementedGameCallbacks) HandleGameReadyToStart(s Session) error {
+	// By default we reply that this player is ready to start playing, since we got the notification.
+	return s.ReadyToStartGame(context.Background())
 }
 func (UnimplementedGameCallbacks) HandleGameStarted(Session) error { return nil }
 func (UnimplementedGameCallbacks) HandleCardPlayed(Session) error  { return nil }
@@ -368,6 +373,8 @@ func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGame
 		case *pb.GameActivityResponse_PlayerLeft_:
 			pl := a.PlayerLeft
 			err = s.callbacks.HandlePlayerLeft(s, pl.GetName(), pl.GetGameId())
+		case *pb.GameActivityResponse_GameReadyToStart_:
+			err = s.callbacks.HandleGameReadyToStart(s)
 		case *pb.GameActivityResponse_GameStarted_:
 			err = s.callbacks.HandleGameStarted(s)
 		case *pb.GameActivityResponse_YourTurn_:
