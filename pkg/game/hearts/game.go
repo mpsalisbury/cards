@@ -75,9 +75,9 @@ func (t *trick) addCard(card cards.Card, playerId string) {
 func (t *trick) chooseWinner() (cards.Card, string) {
 	// Trick winner logic
 	cs := t.cards
+	leadSuit := cs[0].Suit
+	highValue := cs[0].Value
 	highIndex := 0
-	leadSuit := cs[highIndex].Suit
-	highValue := cs[highIndex].Value
 	for i, c := range cs {
 		if c.Suit == leadSuit && c.Value > highValue {
 			highValue = c.Value
@@ -365,6 +365,15 @@ func isValidCardForTrick(card cards.Card, trick cards.Cards, hand cards.Cards, i
 	// For first trick, must lead 2c.
 	if isFirstTrick && len(trick) == 0 {
 		return card == cards.C2c
+	}
+	// Can't break hearts or qs on first trick.
+	if isFirstTrick {
+		if card == cards.Cqs {
+			return false
+		}
+		if card.Suit == cards.Hearts && len(hand.FilterBySuit(cards.Spades, cards.Clubs, cards.Diamonds)) > 0 {
+			return false
+		}
 	}
 
 	// Can play any lead card unless hearts haven't been broken.

@@ -129,12 +129,16 @@ func (c cmdlineCallbacks) HandleYourTurn(s client.Session) error {
 	}
 }
 
-func (c cmdlineCallbacks) chooseCard(gameState client.GameState) cards.Card {
+func (c cmdlineCallbacks) chooseCard(gs client.GameState) cards.Card {
 	for {
-		fmt.Println(showGame(gameState))
-		fmt.Print("Enter card to play: ")
+		recommended := hearts.ChooseBasicStrategyCard(gs)
+		fmt.Println(showGame(gs))
+		fmt.Printf("Enter card to play [%s]: ", recommended)
 		var cs string
 		fmt.Scanln(&cs)
+		if cs == "" {
+			return recommended
+		}
 		card, err := cards.ParseCard(cs)
 		if err == nil {
 			return card
