@@ -103,20 +103,31 @@ func (s *cardGameService) removePlayer(playerId string) error {
 		return fmt.Errorf("can't find player %s", playerId)
 	}
 	if g, found := s.games[player.gameId]; found {
-		err := g.RemovePlayer(playerId)
-		if err != nil {
-			// Can't remove player, abort game
-			g.Abort()
-			s.ReportGameAborted(g)
-			s.scheduleRemoveGame(g.Id(), 10*time.Millisecond)
-		} else {
-			player.gameId = ""
-			s.ReportPlayerLeft(g, playerId)
-			// How to stop listener here.
+		switch g.Phase() {
+		case game.Preparing:
+			err := g.RemovePlayer(playerId)
+			if err != nil {
+				// Can't remove player, abort game
+				s.abortGame(g)
+			} else {
+				player.gameId = ""
+				s.ReportPlayerLeft(g, player.name)
+				// How to stop listener here.
+			}
+		case game.Playing:
+			s.abortGame(g)
+		case game.Completed, game.Aborted:
+			// Don't bother to remove player from completed or aborted game.
 		}
 	}
 	return nil
 }
+func (s *cardGameService) abortGame(g game.Game) {
+	g.Abort()
+	s.ReportGameAborted(g)
+	s.scheduleRemoveGame(g.Id(), time.Second)
+}
+
 func (s *cardGameService) scheduleRemoveGame(gameId string, when time.Duration) {
 	timer := time.NewTimer(when)
 	go func() {
@@ -351,6 +362,7 @@ func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, res
 	defer s.mu.Unlock()
 	s.players[playerId].ch = nil
 	close(ch)
+	s.handleLeaveGame(playerId)
 	return err
 }
 

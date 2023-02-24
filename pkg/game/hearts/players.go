@@ -22,7 +22,7 @@ func enumFlag(target *string, name string, safelist []string, usage string) {
 
 // Creates a flag for specifying the player type to use.
 func AddPlayerFlag(target *string, name string) {
-	enumFlag(target, name, []string{"basic", "random"}, "Type of player logic to use")
+	enumFlag(target, name, []string{"basic", "term", "random"}, "Type of player logic to use")
 }
 
 // Constructs a player from a player flag value.
@@ -30,6 +30,8 @@ func NewPlayerFromFlag(playerType string) (client.GameCallbacks, error) {
 	switch playerType {
 	case "", "basic":
 		return NewBasicPlayer(), nil
+	case "term":
+		return NewTerminalPlayer(), nil
 	case "random":
 		return NewRandomPlayer(), nil
 	default:

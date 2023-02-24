@@ -117,7 +117,7 @@ func (g *heartsGame) RemovePlayer(playerId string) error {
 		return nil
 	}
 	if g.phase != game.Preparing {
-		return fmt.Errorf("can't remove player from game in Preparing phase.")
+		return fmt.Errorf("can't remove player from game not in Preparing phase.")
 	}
 	delete(g.players, playerId)
 	for i, s := range g.playerOrder {

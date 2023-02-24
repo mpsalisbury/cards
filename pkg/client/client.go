@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
@@ -67,9 +68,11 @@ func createExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameServic
 		}
 		return insecure.NewCredentials()
 	}()
-	conn, err := grpc.Dial(config.serverAddr, grpc.WithTransportCredentials(cred))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, config.serverAddr, grpc.WithTransportCredentials(cred), grpc.WithBlock())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error connecting to server at %s: %v", config.serverAddr, err)
 	}
 	client := pb.NewCardGameServiceClient(conn)
 	return conn, client, nil
@@ -103,8 +106,8 @@ type GameCallbacks interface {
 	HandleCardPlayed(Session /*currentTrick cards.Cards*/) error
 	HandleYourTurn(Session) error
 	HandleTrickCompleted(s Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error
-	HandleGameFinished(Session) error
-	HandleGameAborted(Session) error
+	HandleGameFinished(Session)
+	HandleGameAborted(Session)
 	HandleConnectionError(s Session, err error)
 }
 type UnimplementedGameCallbacks struct{}
@@ -126,8 +129,8 @@ func (UnimplementedGameCallbacks) HandleTrickCompleted(
 	s Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
 	return nil
 }
-func (UnimplementedGameCallbacks) HandleGameFinished(Session) error     { return nil }
-func (UnimplementedGameCallbacks) HandleGameAborted(Session) error      { return nil }
+func (UnimplementedGameCallbacks) HandleGameFinished(Session)           {}
+func (UnimplementedGameCallbacks) HandleGameAborted(Session)            {}
 func (UnimplementedGameCallbacks) HandleConnectionError(Session, error) {}
 
 type GameState struct {
@@ -358,11 +361,12 @@ func isConnClosedErr(err error) bool {
 }
 
 func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGameService_ListenForGameActivityClient) {
+loop:
 	for {
 		activity, err := activityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
 			s.callbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
-			break
+			break loop
 		}
 		if err != nil {
 			log.Fatalf("ListenForGameActivity(_) = _, %v", err)
@@ -385,17 +389,19 @@ func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGame
 			err = s.callbacks.HandleYourTurn(s)
 		case *pb.GameActivityResponse_TrickCompleted_:
 			tc := a.TrickCompleted
-			if trick, err := cards.ParseCards(tc.GetTrick()); err == nil {
+			if trick, errr := cards.ParseCards(tc.GetTrick()); errr == nil {
 				err = s.callbacks.HandleTrickCompleted(s, trick, tc.GetTrickWinnerId(), tc.GetTrickWinnerName())
 			}
 		case *pb.GameActivityResponse_GameFinished_:
-			err = s.callbacks.HandleGameFinished(s)
+			s.callbacks.HandleGameFinished(s)
+			break loop
 		case *pb.GameActivityResponse_GameAborted_:
-			err = s.callbacks.HandleGameAborted(s)
+			s.callbacks.HandleGameAborted(s)
+			break loop
 		}
 		if err != nil {
 			log.Printf("Error handling activity: %v\n", err)
-			break
+			break loop
 		}
 	}
 	wg.Done()
