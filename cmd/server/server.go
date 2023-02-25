@@ -16,8 +16,9 @@ func main() {
 	if port == "" {
 		port = "50051"
 	}
-	log.Printf("Listening on port %s", port)
-	listener, err := net.Listen("tcp", ":"+port)
+	hostport := "localhost:" + port
+	log.Printf("Listening on %s", hostport)
+	listener, err := net.Listen("tcp", hostport)
 	if err != nil {
 		log.Fatalf("net.Listen: %v", err)
 	}

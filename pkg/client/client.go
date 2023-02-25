@@ -44,7 +44,7 @@ func Connect(stype ServerType, verbose bool) (Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &connection{conn: conn, client: client, verbose: verbose}, nil
+	return NewConnection(conn, client, verbose), nil
 }
 
 func createClient(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
@@ -84,6 +84,7 @@ func createExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameServic
 
 type Connection interface {
 	Close()
+	ObserveRegistry(ctx context.Context, wg *sync.WaitGroup, callbacks RegistryCallbacks) error
 	Register(ctx context.Context, name string, callbacks GameCallbacks) (Session, error)
 	ListGames(ctx context.Context, phase ...GamePhase) ([]GameSummary, error)
 	GetGameState(ctx context.Context, gameId string) (GameState, error)
@@ -98,12 +99,13 @@ type Session interface {
 	GetGameState(ctx context.Context) (GameState, error)
 }
 
+// TODO: Rename to Client. Drop 'Handle'.
 type GameCallbacks interface {
 	HandlePlayerJoined(s Session, name string, gameId string) error
 	HandlePlayerLeft(s Session, name string, gameId string) error
 	HandleGameReadyToStart(Session) error
 	HandleGameStarted(Session) error
-	HandleCardPlayed(Session /*currentTrick cards.Cards*/) error
+	HandleCardPlayed(Session) error
 	HandleYourTurn(Session) error
 	HandleTrickCompleted(s Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error
 	HandleGameFinished(Session)
@@ -132,6 +134,25 @@ func (UnimplementedGameCallbacks) HandleTrickCompleted(
 func (UnimplementedGameCallbacks) HandleGameFinished(Session)           {}
 func (UnimplementedGameCallbacks) HandleGameAborted(Session)            {}
 func (UnimplementedGameCallbacks) HandleConnectionError(Session, error) {}
+
+type RegistryCallbacks interface {
+	HandleGameCreated(c Connection, gameId string) error
+	HandleGameDeleted(c Connection, gameId string) error
+	HandleFullGamesList(c Connection, gameIds []string) error
+	HandleConnectionError(c Connection, err error)
+}
+type UnimplementedRegistryCallbacks struct{}
+
+func (UnimplementedRegistryCallbacks) HandleGameCreated(c Connection, gameId string) error {
+	return nil
+}
+func (UnimplementedRegistryCallbacks) HandleGameDeleted(c Connection, gameId string) error {
+	return nil
+}
+func (UnimplementedRegistryCallbacks) HandleFullGamesList(c Connection, gameIds []string) error {
+	return nil
+}
+func (UnimplementedRegistryCallbacks) HandleConnectionError(Connection, error) {}
 
 type GameState struct {
 	Id           string
@@ -255,10 +276,19 @@ func (p PlayerState) String(isCompleted bool) string {
 	return sb.String()
 }
 
+func NewConnection(conn *grpc.ClientConn, client pb.CardGameServiceClient, verbose bool) Connection {
+	return &connection{
+		conn:    conn,
+		client:  client,
+		verbose: verbose,
+	}
+}
+
 type connection struct {
-	conn    *grpc.ClientConn
-	client  pb.CardGameServiceClient
-	verbose bool
+	conn      *grpc.ClientConn
+	client    pb.CardGameServiceClient
+	callbacks RegistryCallbacks
+	verbose   bool
 }
 
 func (c *connection) Close() {
@@ -279,7 +309,16 @@ func (c *connection) Register(ctx context.Context, name string, callbacks GameCa
 	if err != nil {
 		return nil, err
 	}
-	return &session{client: c.client, playerId: resp.GetPlayerId(), callbacks: callbacks, verbose: c.verbose}, nil
+	return NewSession(c.client, resp.GetPlayerId(), callbacks, c.verbose), nil
+}
+
+func NewSession(client pb.CardGameServiceClient, playerId string, callbacks GameCallbacks, verbose bool) Session {
+	return &session{
+		client:    client,
+		playerId:  playerId,
+		callbacks: callbacks,
+		verbose:   verbose,
+	}
 }
 
 type session struct {
@@ -318,6 +357,16 @@ func (c *connection) ListGames(ctx context.Context, phase ...GamePhase) ([]GameS
 	}
 	return games, nil
 }
+func (c *connection) ObserveRegistry(ctx context.Context, wg *sync.WaitGroup, callbacks RegistryCallbacks) error {
+	registryActivityReq := &pb.RegistryActivityRequest{}
+	registryActivityStream, err := c.client.ListenForRegistryActivity(ctx, registryActivityReq)
+	if err != nil {
+		return err
+	}
+	c.callbacks = callbacks
+	go c.processRegistryActivity(wg, registryActivityStream)
+	return nil
+}
 
 func (s *session) GetPlayerId() string {
 	return s.playerId
@@ -338,14 +387,14 @@ func (s *session) JoinGame(ctx context.Context, wg *sync.WaitGroup, gameId strin
 	if err != nil {
 		return "", err
 	}
-	activityReq := &pb.GameActivityRequest{
+	gameActivityReq := &pb.GameActivityRequest{
 		PlayerId: s.playerId,
 	}
-	activityStream, err := s.client.ListenForGameActivity(ctx, activityReq)
+	gameActivityStream, err := s.client.ListenForGameActivity(ctx, gameActivityReq)
 	if err != nil {
 		return "", err
 	}
-	go s.processActivity(wg, activityStream)
+	go s.processGameActivity(wg, gameActivityStream)
 	return joinResp.GetGameId(), nil
 }
 
@@ -360,10 +409,10 @@ func isConnClosedErr(err error) bool {
 	return errContainsConnResetMsg || errContainsEOFMsg || err == io.EOF
 }
 
-func (s *session) processActivity(wg *sync.WaitGroup, activityStream pb.CardGameService_ListenForGameActivityClient) {
+func (s *session) processGameActivity(wg *sync.WaitGroup, gameActivityStream pb.CardGameService_ListenForGameActivityClient) {
 loop:
 	for {
-		activity, err := activityStream.Recv()
+		activity, err := gameActivityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
 			s.callbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
 			break loop
@@ -516,6 +565,39 @@ func toPlayerState(p *pb.GameState_Player) (PlayerState, error) {
 		TrickScore: int(p.GetTrickScore()),
 		HandScore:  int(p.GetHandScore()),
 	}, nil
+}
+
+func (c *connection) processRegistryActivity(wg *sync.WaitGroup, registryActivityStream pb.CardGameService_ListenForRegistryActivityClient) {
+loop:
+	for {
+		activity, err := registryActivityStream.Recv()
+		if err != nil && isConnClosedErr(err) {
+			c.callbacks.HandleConnectionError(c, fmt.Errorf("Connection to server closed"))
+			break loop
+		}
+		if err != nil {
+			log.Fatalf("ListenForRegistryActivity(_) = _, %v", err)
+		}
+		if c.verbose {
+			log.Println(activity)
+		}
+		switch a := activity.Type.(type) {
+		case *pb.RegistryActivityResponse_GameCreated_:
+			gameId := a.GameCreated.GetGameId()
+			err = c.callbacks.HandleGameCreated(c, gameId)
+		case *pb.RegistryActivityResponse_GameDeleted_:
+			gameId := a.GameDeleted.GetGameId()
+			err = c.callbacks.HandleGameDeleted(c, gameId)
+		case *pb.RegistryActivityResponse_FullGamesList_:
+			gameIds := a.FullGamesList.GetGameIds()
+			err = c.callbacks.HandleFullGamesList(c, gameIds)
+		}
+		if err != nil {
+			log.Printf("Error handling activity: %v\n", err)
+			break loop
+		}
+	}
+	wg.Done()
 }
 
 /*

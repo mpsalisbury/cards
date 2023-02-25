@@ -29,6 +29,7 @@ type CardGameServiceClient interface {
 	GameAction(ctx context.Context, in *GameActionRequest, opts ...grpc.CallOption) (*Status, error)
 	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error)
 	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
+	ListenForRegistryActivity(ctx context.Context, in *RegistryActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForRegistryActivityClient, error)
 }
 
 type cardGameServiceClient struct {
@@ -125,6 +126,38 @@ func (x *cardGameServiceListenForGameActivityClient) Recv() (*GameActivityRespon
 	return m, nil
 }
 
+func (c *cardGameServiceClient) ListenForRegistryActivity(ctx context.Context, in *RegistryActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForRegistryActivityClient, error) {
+	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[1], "/cards.proto.CardGameService/ListenForRegistryActivity", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &cardGameServiceListenForRegistryActivityClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type CardGameService_ListenForRegistryActivityClient interface {
+	Recv() (*RegistryActivityResponse, error)
+	grpc.ClientStream
+}
+
+type cardGameServiceListenForRegistryActivityClient struct {
+	grpc.ClientStream
+}
+
+func (x *cardGameServiceListenForRegistryActivityClient) Recv() (*RegistryActivityResponse, error) {
+	m := new(RegistryActivityResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // CardGameServiceServer is the server API for CardGameService service.
 // All implementations must embed UnimplementedCardGameServiceServer
 // for forward compatibility
@@ -136,6 +169,7 @@ type CardGameServiceServer interface {
 	GameAction(context.Context, *GameActionRequest) (*Status, error)
 	GetGameState(context.Context, *GameStateRequest) (*GameState, error)
 	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
+	ListenForRegistryActivity(*RegistryActivityRequest, CardGameService_ListenForRegistryActivityServer) error
 	mustEmbedUnimplementedCardGameServiceServer()
 }
 
@@ -163,6 +197,9 @@ func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameSta
 }
 func (UnimplementedCardGameServiceServer) ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error {
 	return status.Errorf(codes.Unimplemented, "method ListenForGameActivity not implemented")
+}
+func (UnimplementedCardGameServiceServer) ListenForRegistryActivity(*RegistryActivityRequest, CardGameService_ListenForRegistryActivityServer) error {
+	return status.Errorf(codes.Unimplemented, "method ListenForRegistryActivity not implemented")
 }
 func (UnimplementedCardGameServiceServer) mustEmbedUnimplementedCardGameServiceServer() {}
 
@@ -306,6 +343,27 @@ func (x *cardGameServiceListenForGameActivityServer) Send(m *GameActivityRespons
 	return x.ServerStream.SendMsg(m)
 }
 
+func _CardGameService_ListenForRegistryActivity_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(RegistryActivityRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CardGameServiceServer).ListenForRegistryActivity(m, &cardGameServiceListenForRegistryActivityServer{stream})
+}
+
+type CardGameService_ListenForRegistryActivityServer interface {
+	Send(*RegistryActivityResponse) error
+	grpc.ServerStream
+}
+
+type cardGameServiceListenForRegistryActivityServer struct {
+	grpc.ServerStream
+}
+
+func (x *cardGameServiceListenForRegistryActivityServer) Send(m *RegistryActivityResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 // CardGameService_ServiceDesc is the grpc.ServiceDesc for CardGameService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +400,11 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ListenForGameActivity",
 			Handler:       _CardGameService_ListenForGameActivity_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ListenForRegistryActivity",
+			Handler:       _CardGameService_ListenForRegistryActivity_Handler,
 			ServerStreams: true,
 		},
 	},

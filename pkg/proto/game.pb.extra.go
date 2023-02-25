@@ -11,3 +11,7 @@ type GameActionRequest_Type interface {
 type GameActivityResponse_Type interface {
 	isGameActivityResponse_Type
 }
+
+type RegistryActivityResponse_Type interface {
+	isRegistryActivityResponse_Type
+}

@@ -12,6 +12,7 @@ service CardGameService {
     rpc GameAction(GameActionRequest) returns (Status);
     rpc GetGameState(GameStateRequest) returns (GameState);
     rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
+    rpc ListenForRegistryActivity(RegistryActivityRequest) returns (stream RegistryActivityResponse);
 }
 
 message RegisterRequest {
@@ -123,8 +124,7 @@ message GameActivityResponse {
         GameStarted game_started = 4;
         CardPlayed card_played = 5;
         TrickCompleted trick_completed = 6;
-        // for player listener
-        YourTurn your_turn = 7;
+        YourTurn your_turn = 7; // for player listener
         GameFinished game_finished = 8;
         GameAborted game_aborted = 9;
         string broadcast_msg = 10;
@@ -164,18 +164,21 @@ message PingResponse {
     string message = 1;
 }
 
-// Action reported
-//  Player joined
-//  Game ready to start
-//  Game started
-//  Your turn
-//  Player played a card
-//  Trick was taken
-//  Game is over
-//  Chat received
-// Action sent
-//  Player ready to start
-//  Play card
-//  Quit/Leave
-//  Send chat
+message RegistryActivityRequest { }
 
+message RegistryActivityResponse {
+    oneof type {
+        GameCreated game_created = 1;
+        GameDeleted game_deleted = 2;
+        FullGamesList full_games_list = 3;
+    }
+    message GameCreated {
+        string game_id = 1;
+    }
+    message GameDeleted {
+        string game_id = 1;
+    }
+    message FullGamesList {
+        repeated string game_ids = 1;
+    }
+}

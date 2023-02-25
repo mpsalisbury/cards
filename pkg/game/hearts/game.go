@@ -159,7 +159,7 @@ func (g heartsGame) IsEnoughPlayersToStart() bool {
 	if len(g.players) != 4 {
 		return false
 	}
-	log.Printf("Enough players, ready to start %s", g.id)
+	//log.Printf("Enough players, ready to start %s", g.id)
 	return true
 }
 
@@ -169,7 +169,7 @@ func (g *heartsGame) ConfirmPlayerReadyToStart(playerId string) error {
 	if !ok {
 		return fmt.Errorf("no player %s found", playerId)
 	}
-	fmt.Printf("Player %s ready to start\n", playerId)
+	//fmt.Printf("Player %s ready to start\n", playerId)
 	p.isReadyToStart = true
 	return nil
 }

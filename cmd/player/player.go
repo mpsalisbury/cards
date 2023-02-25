@@ -62,6 +62,7 @@ func RunPlayer() error {
 	}
 	fmt.Printf("Joined game %s\n", joinedGameId)
 	wg.Wait()
+	fmt.Printf("Game %s finished\n", joinedGameId)
 	return nil
 }
 
