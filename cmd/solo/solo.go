@@ -17,11 +17,13 @@ var (
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your player name")
 	playerType = "basic"
+	serverType = "local"
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	hearts.AddPlayerFlag(&playerType, "type")
+	hearts.AddPlayerFlag(&playerType, "player")
+	client.AddServerFlag(&serverType, "server")
 }
 func main() {
 	flag.Parse()
@@ -31,9 +33,13 @@ func main() {
 	}
 }
 func runPlayer() error {
-	conn, err := client.Connect(client.LocalServer, *verbose)
+	stype, err := client.ServerTypeFromFlag(serverType)
 	if err != nil {
-		return fmt.Errorf("couldn't connect to server: %v", err)
+		return err
+	}
+	conn, err := client.Connect(stype, *verbose)
+	if err != nil {
+		return fmt.Errorf("couldn't connect to server: %w", err)
 	}
 	gameId, err := conn.CreateGame(context.Background())
 	if err != nil {
@@ -62,7 +68,7 @@ func runPlayer() error {
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	player, err := hearts.NewPlayerFromFlag(playerType)
 	if err != nil {
-		return fmt.Errorf("couldn't create player: %v", err)
+		return fmt.Errorf("couldn't create player: %w", err)
 	}
 	return startPlayer(conn, wg, "", gameId, player)
 }
@@ -73,12 +79,11 @@ func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId
 	ctx := context.Background()
 	session, err := conn.Register(ctx, name, callbacks)
 	if err != nil {
-		return fmt.Errorf("couldn't register with server: %v", err)
+		return fmt.Errorf("couldn't register with server: %w", err)
 	}
 	err = session.JoinGame(ctx, wg, gameId)
 	if err != nil {
-		return fmt.Errorf("couldn't join game: %v", err)
+		return fmt.Errorf("couldn't join game: %w", err)
 	}
-	wg.Add(1)
 	return nil
 }

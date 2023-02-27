@@ -13,55 +13,68 @@ import (
 
 var (
 	//	logger     = log.New(os.Stdout, "", 0)
-	gameId  = flag.String("game", "", "Game to observe")
-	all     = flag.Bool("all", false, "Observe all games")
-	verbose = flag.Bool("verbose", false, "Print extra information during the session")
-	name    = flag.String("name", "", "Your observer name")
+	gameId     = flag.String("game", "", "Game to observe")
+	all        = flag.Bool("all", false, "Observe all games")
+	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
+	name       = flag.String("name", "", "Your observer name")
+	serverType = "local"
 )
+
+func init() {
+	client.AddServerFlag(&serverType, "server")
+}
 
 func main() {
 	flag.Parse()
-
-	conn, err := client.Connect(client.LocalServer, *verbose)
+	err := observe()
 	if err != nil {
-		log.Fatalf("Couldn't connect to server: %v", err)
+		log.Print(err)
+	}
+}
+func observe() error {
+	stype, err := client.ServerTypeFromFlag(serverType)
+	if err != nil {
+		return err
+	}
+	conn, err := client.Connect(stype, *verbose)
+	if err != nil {
+		return fmt.Errorf("Couldn't connect to server: %w", err)
 	}
 	ctx := context.Background()
 	wg := new(sync.WaitGroup)
 	if *all {
 		rc := &registryCallbacks{wg: wg}
-		wg.Add(1)
 		_, err := conn.RegisterObserver(ctx, wg, *name, rc, gameCallbacks{})
 		if err != nil {
-			log.Fatalf("Couldn't observe registry: %v", err)
+			return fmt.Errorf("Couldn't observe registry: %w", err)
 		}
 		fmt.Printf("Observing all games\n")
 	} else if *gameId == "" {
 		showGames(conn)
-		return
+		return nil
 	} else {
 		// Observe one game.
 		gameState, err := conn.GetGameState(ctx, *gameId)
 		if err != nil {
-			log.Fatalf("Couldn't get gamestate: %v", err)
+			return fmt.Errorf("Couldn't get gamestate: %w", err)
 		}
 		if gameState.Phase == client.Completed || gameState.Phase == client.Aborted {
 			// game is complete, just dump state.
 			fmt.Printf("%v\n", gameState)
-			return
+			return nil
 		}
 		session, err := conn.Register(ctx, *name, gameCallbacks{})
 		if err != nil {
-			log.Fatalf("Couldn't register with server: %v", err)
+			return fmt.Errorf("Couldn't register with server: %w", err)
 		}
-		wg.Add(1)
 		err = session.ObserveGame(ctx, wg, *gameId)
 		if err != nil {
-			log.Fatalf("Couldn't observe game %s: %v", *gameId, err)
+			return fmt.Errorf("Couldn't observe game %s: %w", *gameId, err)
 		}
 		fmt.Printf("Observing game %s\n", *gameId)
 	}
 	wg.Wait()
+	return nil
 }
 
 func showGames(conn client.Connection) {
@@ -92,7 +105,6 @@ func (rc *registryCallbacks) observeGame(gameId string) error {
 		fmt.Printf("Can't observe game %s - no session yet\n", gameId)
 		return nil
 	}
-	rc.wg.Add(1)
 	err := rc.session.ObserveGame(context.Background(), rc.wg, gameId)
 	if err != nil {
 		log.Fatalf("Couldn't observe game %s: %v", gameId, err)

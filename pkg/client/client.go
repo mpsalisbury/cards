@@ -31,6 +31,25 @@ const (
 	InProcessServer
 )
 
+// Creates a flag for specifying the server type to use.
+func AddServerFlag(target *string, name string) {
+	EnumFlag(target, name, []string{"local", "hosted", "inprocess"}, "Type of server to use")
+}
+
+// Constructs a player from a player flag value.
+func ServerTypeFromFlag(serverType string) (ServerType, error) {
+	switch serverType {
+	case "", "local":
+		return LocalServer, nil
+	case "hosted":
+		return HostedServer, nil
+	case "inprocess":
+		return InProcessServer, nil
+	default:
+		return LocalServer, fmt.Errorf("invalid server type %s", serverType)
+	}
+}
+
 var configs = map[ServerType]struct {
 	serverAddr string
 	secure     bool
@@ -321,6 +340,7 @@ func (c *connection) RegisterObserver(ctx context.Context, wg *sync.WaitGroup, n
 	}
 	c.registryCallbacks = registryCallbacks
 	sessionIdChan := make(chan string)
+	wg.Add(1)
 	go c.processRegistryActivity(wg, sessionIdChan, registryActivityStream)
 	// TODO: add timeout
 	sessionId := <-sessionIdChan
@@ -394,6 +414,7 @@ func (s *session) JoinGame(ctx context.Context, wg *sync.WaitGroup, gameId strin
 	if err != nil {
 		return err
 	}
+	wg.Add(1)
 	go s.processGameActivity(wg, gameActivityStream)
 	return nil
 }
@@ -406,6 +427,7 @@ func (s *session) ObserveGame(ctx context.Context, wg *sync.WaitGroup, gameId st
 	if err != nil {
 		return err
 	}
+	wg.Add(1)
 	go s.processGameActivity(wg, gameActivityStream)
 	return nil
 }
@@ -423,12 +445,12 @@ func isConnClosedErr(err error) bool {
 
 // Handles both JoinGame and ObserveGame streams.
 func (s *session) processGameActivity(wg *sync.WaitGroup, gameActivityStream pb.CardGameService_ObserveGameClient) {
-loop:
+	defer wg.Done()
 	for {
 		activity, err := gameActivityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
 			s.gameCallbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
-			break loop
+			return
 		}
 		if err != nil {
 			log.Fatalf("ListenForGameActivity(_) = _, %v", err)
@@ -459,17 +481,16 @@ loop:
 			}
 		case *pb.GameActivity_GameFinished_:
 			s.gameCallbacks.HandleGameFinished(s, gameId)
-			break loop
+			return
 		case *pb.GameActivity_GameAborted_:
 			s.gameCallbacks.HandleGameAborted(s, gameId)
-			break loop
+			return
 		}
 		if err != nil {
 			log.Printf("Error handling activity: %v\n", err)
-			break loop
+			return
 		}
 	}
-	wg.Done()
 }
 
 func (s *session) ReadyToStartGame(ctx context.Context, gameId string) error {
@@ -587,12 +608,12 @@ func toPlayerState(p *pb.GameState_Player) (PlayerState, error) {
 }
 
 func (c *connection) processRegistryActivity(wg *sync.WaitGroup, sessionIdChan chan string, registryActivityStream pb.CardGameService_RegisterClient) {
-loop:
+	defer wg.Done()
 	for {
 		activity, err := registryActivityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
 			c.registryCallbacks.HandleConnectionError(c, fmt.Errorf("Connection to server closed"))
-			break loop
+			return
 		}
 		if err != nil {
 			log.Fatalf("ListenForRegistryActivity(_) = _, %v", err)
@@ -616,10 +637,9 @@ loop:
 		}
 		if err != nil {
 			log.Printf("Error handling activity: %v\n", err)
-			break loop
+			return
 		}
 	}
-	wg.Done()
 }
 
 func newInProcessServer() pb.CardGameServiceClient {

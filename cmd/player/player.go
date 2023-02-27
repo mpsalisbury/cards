@@ -17,21 +17,27 @@ var (
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your player name")
 	playerType = "basic"
+	serverType = "local"
 )
 
 func init() {
-	hearts.AddPlayerFlag(&playerType, "type")
+	hearts.AddPlayerFlag(&playerType, "player")
+	client.AddServerFlag(&serverType, "server")
 }
 
 func main() {
 	flag.Parse()
-	err := RunPlayer()
+	err := runPlayer()
 	if err != nil {
 		fmt.Printf("%v\n", err)
 	}
 }
-func RunPlayer() error {
-	conn, err := client.Connect(client.LocalServer, *verbose)
+func runPlayer() error {
+	stype, err := client.ServerTypeFromFlag(serverType)
+	if err != nil {
+		return err
+	}
+	conn, err := client.Connect(stype, *verbose)
 	if err != nil {
 		return err
 	}
@@ -55,7 +61,6 @@ func RunPlayer() error {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	wg.Add(1)
 	err = session.JoinGame(ctx, wg, *gameId)
 	if err != nil {
 		return err
