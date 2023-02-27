@@ -41,8 +41,8 @@ func (terminalCallbacks) playerNames(gameState client.GameState, pid string) (pl
 	return
 }
 
-func (c terminalCallbacks) HandleTrickCompleted(s client.Session, gameId string, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
-	fmt.Printf("Trick: %s won by %s\n\n", trick, trickWinnerName)
+func (c terminalCallbacks) HandleTrickCompleted(s client.Session, gameId string, trick cards.Cards, winningCard cards.Card, winnerId, winnerName string) error {
+	fmt.Printf("Trick: %s won by %s\n\n", trick, winnerName)
 	return nil
 }
 

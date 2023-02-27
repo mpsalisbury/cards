@@ -55,7 +55,7 @@ type Reporter interface {
 	ReportPlayerLeft(g Game, name string)
 	ReportGameStarted(g Game)
 	ReportCardPlayed(g Game)
-	ReportTrickCompleted(g Game, trick cards.Cards, trickWinnerId, trickWinnerName string)
+	ReportTrickCompleted(g Game, trick cards.Cards, winningCard cards.Card, trickWinnerId, trickWinnerName string)
 	ReportGameFinished(g Game)
 	ReportGameAborted(g Game)
 	ReportNextTurn(g Game)

@@ -137,8 +137,9 @@ message GameActivity {
     }
     message TrickCompleted {
         repeated string trick = 1;
-        string trick_winner_id = 2;
-        string trick_winner_name = 3;
+        string winning_card = 2;
+        string winner_id = 3;
+        string winner_name = 4;
     }
     message YourTurn {
     }

@@ -24,7 +24,6 @@ const _ = grpc.SupportPackageIsVersion7
 type CardGameServiceClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (CardGameService_RegisterClient, error)
-	//rpc Register(RegisterRequest) returns (RegisterResponse);
 	CreateGame(ctx context.Context, in *CreateGameRequest, opts ...grpc.CallOption) (*CreateGameResponse, error)
 	ListGames(ctx context.Context, in *ListGamesRequest, opts ...grpc.CallOption) (*ListGamesResponse, error)
 	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (CardGameService_JoinGameClient, error)
@@ -188,7 +187,6 @@ func (c *cardGameServiceClient) GetGameState(ctx context.Context, in *GameStateR
 type CardGameServiceServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	Register(*RegisterRequest, CardGameService_RegisterServer) error
-	//rpc Register(RegisterRequest) returns (RegisterResponse);
 	CreateGame(context.Context, *CreateGameRequest) (*CreateGameResponse, error)
 	ListGames(context.Context, *ListGamesRequest) (*ListGamesResponse, error)
 	JoinGame(*JoinGameRequest, CardGameService_JoinGameServer) error

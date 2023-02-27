@@ -29,16 +29,19 @@ func main() {
 	ctx := context.Background()
 	wg := new(sync.WaitGroup)
 	if *all {
+		rc := &registryCallbacks{wg: wg}
 		wg.Add(1)
-		_, err = conn.RegisterObserver(ctx, wg, *name, registryCallbacks{}, gameCallbacks{})
+		session, err := conn.RegisterObserver(ctx, wg, *name, rc, gameCallbacks{})
 		if err != nil {
 			log.Fatalf("Couldn't observe registry: %v", err)
 		}
-		fmt.Printf("Observing registry\n")
+		rc.session = session
+		fmt.Printf("Observing all games\n")
 	} else if *gameId == "" {
 		showGames(conn)
 		return
 	} else {
+		// Observe one game.
 		gameState, err := conn.GetGameState(ctx, *gameId)
 		if err != nil {
 			log.Fatalf("Couldn't get gamestate: %v", err)
@@ -48,8 +51,7 @@ func main() {
 			fmt.Printf("%v\n", gameState)
 			return
 		}
-		wg.Add(1)
-		session, err := conn.RegisterObserver(ctx, wg, *name, registryCallbacks{}, gameCallbacks{})
+		session, err := conn.Register(ctx, *name, gameCallbacks{})
 		if err != nil {
 			log.Fatalf("Couldn't register with server: %v", err)
 		}
@@ -82,27 +84,45 @@ func showGames(conn client.Connection) {
 // client.RegistryCallbacks
 type registryCallbacks struct {
 	client.UnimplementedRegistryCallbacks
+	session client.Session
+	wg      *sync.WaitGroup // WaitGroup used by the main process to wait for subthreads.
 }
 
-func (registryCallbacks) HandleGameCreated(c client.Connection, gameId string) error {
-	fmt.Printf("Game %s created\n", gameId)
+func (rc *registryCallbacks) observeGame(gameId string) error {
+	if rc.session == nil {
+		fmt.Printf("Can't observe game %s - no session yet\n", gameId)
+		return nil
+	}
+	rc.wg.Add(1)
+	err := rc.session.ObserveGame(context.Background(), rc.wg, gameId)
+	if err != nil {
+		log.Fatalf("Couldn't observe game %s: %v", gameId, err)
+	}
+	fmt.Printf("Observing new game %s\n", gameId)
 	return nil
 }
+
+func (rc *registryCallbacks) HandleGameCreated(c client.Connection, gameId string) error {
+	return rc.observeGame(gameId)
+}
+
 func (registryCallbacks) HandleGameDeleted(c client.Connection, gameId string) error {
 	fmt.Printf("Game %s deleted\n", gameId)
 	return nil
 }
-func (registryCallbacks) HandleFullGamesList(c client.Connection, gameIds []string) error {
+
+func (rc *registryCallbacks) HandleFullGamesList(c client.Connection, gameIds []string) error {
 	if len(gameIds) > 0 {
-		fmt.Printf("Existing games:\n")
 		for _, gid := range gameIds {
-			fmt.Printf("  %s\n", gid)
+			if err := rc.observeGame(gid); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 func (registryCallbacks) HandleConnectionError(c client.Connection, err error) {
-	fmt.Printf("Connection error: %v\n", err)
+	fmt.Printf("%v\n", err)
 }
 
 // client.GameCallbacks
@@ -119,11 +139,7 @@ func (gameCallbacks) HandlePlayerLeft(s client.Session, name string, gameId stri
 	return nil
 }
 func (c gameCallbacks) HandleGameStarted(s client.Session, gameId string) error {
-	gameState, err := s.GetGameState(context.Background(), gameId)
-	if err != nil {
-		return fmt.Errorf("couldn't get game state: %v", err)
-	}
-	fmt.Printf("%v\n", gameState)
+	fmt.Printf("Game %s started\n", gameId)
 	return nil
 }
 func (c gameCallbacks) HandleGameFinished(s client.Session, gameId string) {
@@ -135,7 +151,7 @@ func (c gameCallbacks) HandleGameAborted(s client.Session, gameId string) {
 	c.showGameState(s, gameId)
 }
 func (c gameCallbacks) HandleConnectionError(s client.Session, err error) {
-	fmt.Printf("Connection error: %v\n", err)
+	fmt.Printf("%v\n", err)
 }
 func (c gameCallbacks) showGameState(s client.Session, gameId string) {
 	gameState, err := s.GetGameState(context.Background(), gameId)
@@ -145,12 +161,8 @@ func (c gameCallbacks) showGameState(s client.Session, gameId string) {
 	fmt.Printf("%v\n", gameState)
 }
 
-func (c gameCallbacks) HandleTrickCompleted(s client.Session, gameId string, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
-	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx, gameId)
-	if err != nil {
-		return fmt.Errorf("couldn't get game state: %v", err)
-	}
-	fmt.Printf("%v\n", gameState)
+func (c gameCallbacks) HandleTrickCompleted(s client.Session, gameId string,
+	trick cards.Cards, winningCard cards.Card, trickWinnerId, trickWinnerName string) error {
+	fmt.Printf("%s trick: %v - winner %s\n", gameId, trick, winningCard)
 	return nil
 }

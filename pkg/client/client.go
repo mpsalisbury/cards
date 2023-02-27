@@ -107,7 +107,7 @@ type GameCallbacks interface {
 	HandleGameStarted(s Session, gameId string) error
 	HandleCardPlayed(s Session, gameId string) error
 	HandleYourTurn(s Session, gameId string) error
-	HandleTrickCompleted(s Session, gameId string, trick cards.Cards, trickWinnerId, trickWinnerName string) error
+	HandleTrickCompleted(s Session, gameId string, trick cards.Cards, winningCard cards.Card, winnerId, winnerName string) error
 	HandleGameFinished(s Session, gameId string)
 	HandleGameAborted(s Session, gameId string)
 	HandleConnectionError(s Session, err error)
@@ -128,7 +128,7 @@ func (UnimplementedGameCallbacks) HandleGameStarted(s Session, gameId string) er
 func (UnimplementedGameCallbacks) HandleCardPlayed(s Session, gameId string) error  { return nil }
 func (UnimplementedGameCallbacks) HandleYourTurn(s Session, gameId string) error    { return nil }
 func (UnimplementedGameCallbacks) HandleTrickCompleted(
-	s Session, gameId string, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
+	s Session, gameId string, trick cards.Cards, winningCard cards.Card, winnerId, winnerName string) error {
 	return nil
 }
 func (UnimplementedGameCallbacks) HandleGameFinished(s Session, gameId string) {}
@@ -448,8 +448,10 @@ loop:
 			err = s.callbacks.HandleYourTurn(s, gameId)
 		case *pb.GameActivity_TrickCompleted_:
 			tc := a.TrickCompleted
-			if trick, errr := cards.ParseCards(tc.GetTrick()); errr == nil {
-				err = s.callbacks.HandleTrickCompleted(s, gameId, trick, tc.GetTrickWinnerId(), tc.GetTrickWinnerName())
+			trick, err1 := cards.ParseCards(tc.GetTrick())
+			winningCard, err2 := cards.ParseCard(tc.GetWinningCard())
+			if err1 == nil && err2 == nil {
+				err = s.callbacks.HandleTrickCompleted(s, gameId, trick, winningCard, tc.GetWinnerId(), tc.GetWinnerName())
 			}
 		case *pb.GameActivity_GameFinished_:
 			s.callbacks.HandleGameFinished(s, gameId)

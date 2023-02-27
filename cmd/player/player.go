@@ -88,8 +88,8 @@ func chooseGame(conn client.Connection) (string, error) {
 	if len(games) > 0 {
 		return games[0].Id, nil
 	}
-	// Empty gameId will create a new game.
-	return "", nil
+	// Else create a new game.
+	return conn.CreateGame(ctx)
 }
 
 // client.GameCallbacks

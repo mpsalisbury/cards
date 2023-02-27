@@ -325,7 +325,7 @@ func (g *heartsGame) HandlePlayCard(playerId string, card cards.Card, r game.Rep
 	g.currentTrick = &trick{}
 	g.numTricksPlayed++
 	g.nextPlayerIndex = slices.Index(g.playerOrder, winnerId)
-	r.ReportTrickCompleted(g, winningTrick.cards, winnerId, winner.name)
+	r.ReportTrickCompleted(g, winningTrick.cards, winningCard, winnerId, winner.name)
 
 	// If next player has no more cards, we're done.
 	if len(g.nextPlayer().cards) == 0 {

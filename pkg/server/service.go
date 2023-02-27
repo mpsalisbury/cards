@@ -125,7 +125,7 @@ func (s *cardGameService) addGame() *gameSession {
 }
 
 func (s *cardGameService) removePlayerFromGame(playerId, gameId string) error {
-	log.Printf("Removing player %s from game %s\n", playerId, gameId)
+	//	log.Printf("Removing player %s from game %s\n", playerId, gameId)
 	player, ok := s.players[playerId]
 	if !ok {
 		return fmt.Errorf("can't find player %s", playerId)
@@ -179,7 +179,7 @@ func (s *cardGameService) deleteGame(gameId string) {
 			delete(player.gameIds, gameId)
 		}
 	}
-	log.Printf("Deleting game %s\n", gameId)
+	log.Printf("Deleted game %s\n", gameId)
 	delete(s.games, gameId)
 	s.reportGameDeleted(gameId)
 }
@@ -466,14 +466,15 @@ func (s *cardGameService) ReportCardPlayed(g game.Game) {
 		g,
 		&pb.GameActivity_CardPlayed_{})
 }
-func (s *cardGameService) ReportTrickCompleted(g game.Game, trick cards.Cards, trickWinnerId, trickWinnerName string) {
+func (s *cardGameService) ReportTrickCompleted(g game.Game, trick cards.Cards, winningCard cards.Card, winnerId, winnerName string) {
 	s.reportGameActivityToAll(
 		g,
 		&pb.GameActivity_TrickCompleted_{
 			TrickCompleted: &pb.GameActivity_TrickCompleted{
-				Trick:           trick.Strings(),
-				TrickWinnerId:   trickWinnerId,
-				TrickWinnerName: trickWinnerName,
+				Trick:       trick.Strings(),
+				WinningCard: winningCard.String(),
+				WinnerId:    winnerId,
+				WinnerName:  winnerName,
 			},
 		})
 }
