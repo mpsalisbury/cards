@@ -31,11 +31,10 @@ func main() {
 	if *all {
 		rc := &registryCallbacks{wg: wg}
 		wg.Add(1)
-		session, err := conn.RegisterObserver(ctx, wg, *name, rc, gameCallbacks{})
+		_, err := conn.RegisterObserver(ctx, wg, *name, rc, gameCallbacks{})
 		if err != nil {
 			log.Fatalf("Couldn't observe registry: %v", err)
 		}
-		rc.session = session
 		fmt.Printf("Observing all games\n")
 	} else if *gameId == "" {
 		showGames(conn)
@@ -100,6 +99,10 @@ func (rc *registryCallbacks) observeGame(gameId string) error {
 	}
 	fmt.Printf("Observing new game %s\n", gameId)
 	return nil
+}
+
+func (rc *registryCallbacks) InstallSession(session client.Session) {
+	rc.session = session
 }
 
 func (rc *registryCallbacks) HandleGameCreated(c client.Connection, gameId string) error {

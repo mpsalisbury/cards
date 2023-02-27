@@ -25,7 +25,7 @@ func NewCardGameService() pb.CardGameServiceServer {
 }
 
 type cardGameService struct {
-	pb.UnimplementedCardGameServiceServer
+	pb.UnsafeCardGameServiceServer
 	mu      sync.Mutex                // Mutex for all data below
 	players map[string]*playerSession // Keyed by sessionId
 	games   map[string]*gameSession   // Keyed by gameId

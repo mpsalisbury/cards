@@ -12,6 +12,7 @@ import (
 
 	"github.com/mpsalisbury/cards/pkg/cards"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
+	"github.com/mpsalisbury/cards/pkg/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -27,8 +28,7 @@ type ServerType uint8
 const (
 	LocalServer ServerType = iota
 	HostedServer
-
-//	InProcessServer
+	InProcessServer
 )
 
 var configs = map[ServerType]struct {
@@ -51,8 +51,8 @@ func createClient(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient,
 	switch stype {
 	case LocalServer, HostedServer:
 		return connectToExternalServer(stype)
-		//	case InProcessServer:
-		//		return connectToInProcessServer()
+	case InProcessServer:
+		return connectToInProcessServer()
 	}
 	return nil, nil, fmt.Errorf("server type %v not supported", stype)
 }
@@ -78,9 +78,9 @@ func connectToExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameSer
 	return conn, client, nil
 }
 
-// func connectToInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error) {
-// 	return nil, newInProcessServer(), nil
-// }
+func connectToInProcessServer() (*grpc.ClientConn, pb.CardGameServiceClient, error) {
+	return nil, newInProcessServer(), nil
+}
 
 type Connection interface {
 	Close()
@@ -136,6 +136,7 @@ func (UnimplementedGameCallbacks) HandleGameAborted(s Session, gameId string)  {
 func (UnimplementedGameCallbacks) HandleConnectionError(Session, error)        {}
 
 type RegistryCallbacks interface {
+	InstallSession(Session)
 	HandleGameCreated(c Connection, gameId string) error
 	HandleGameDeleted(c Connection, gameId string) error
 	HandleFullGamesList(c Connection, gameIds []string) error
@@ -143,6 +144,7 @@ type RegistryCallbacks interface {
 }
 type UnimplementedRegistryCallbacks struct{}
 
+func (UnimplementedRegistryCallbacks) InstallSession(Session) {}
 func (UnimplementedRegistryCallbacks) HandleGameCreated(c Connection, gameId string) error {
 	return nil
 }
@@ -285,10 +287,10 @@ func NewConnection(conn *grpc.ClientConn, client pb.CardGameServiceClient, verbo
 }
 
 type connection struct {
-	conn      *grpc.ClientConn
-	client    pb.CardGameServiceClient
-	callbacks RegistryCallbacks
-	verbose   bool
+	conn              *grpc.ClientConn
+	client            pb.CardGameServiceClient
+	registryCallbacks RegistryCallbacks
+	verbose           bool
 }
 
 func (c *connection) Close() {
@@ -317,28 +319,30 @@ func (c *connection) RegisterObserver(ctx context.Context, wg *sync.WaitGroup, n
 	if err != nil {
 		return nil, err
 	}
-	c.callbacks = registryCallbacks
+	c.registryCallbacks = registryCallbacks
 	sessionIdChan := make(chan string)
 	go c.processRegistryActivity(wg, sessionIdChan, registryActivityStream)
 	// TODO: add timeout
 	sessionId := <-sessionIdChan
-	return newSession(c.client, sessionId, gameCallbacks, c.verbose), nil
+	session := newSession(c.client, sessionId, gameCallbacks, c.verbose)
+	registryCallbacks.InstallSession(session)
+	return session, nil
 }
 
-func newSession(client pb.CardGameServiceClient, sessionId string, callbacks GameCallbacks, verbose bool) Session {
+func newSession(client pb.CardGameServiceClient, sessionId string, gameCallbacks GameCallbacks, verbose bool) Session {
 	return &session{
-		client:    client,
-		sessionId: sessionId,
-		callbacks: callbacks,
-		verbose:   verbose,
+		client:        client,
+		sessionId:     sessionId,
+		gameCallbacks: gameCallbacks,
+		verbose:       verbose,
 	}
 }
 
 type session struct {
-	client    pb.CardGameServiceClient
-	sessionId string
-	callbacks GameCallbacks
-	verbose   bool
+	client        pb.CardGameServiceClient
+	sessionId     string
+	gameCallbacks GameCallbacks
+	verbose       bool
 }
 
 type GameSummary struct {
@@ -423,7 +427,7 @@ loop:
 	for {
 		activity, err := gameActivityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
-			s.callbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
+			s.gameCallbacks.HandleConnectionError(s, fmt.Errorf("Connection to server closed"))
 			break loop
 		}
 		if err != nil {
@@ -436,28 +440,28 @@ loop:
 		switch a := activity.Type.(type) {
 		case *pb.GameActivity_PlayerJoined_:
 			pj := a.PlayerJoined
-			err = s.callbacks.HandlePlayerJoined(s, pj.GetName(), gameId)
+			err = s.gameCallbacks.HandlePlayerJoined(s, pj.GetName(), gameId)
 		case *pb.GameActivity_PlayerLeft_:
 			pl := a.PlayerLeft
-			err = s.callbacks.HandlePlayerLeft(s, pl.GetName(), gameId)
+			err = s.gameCallbacks.HandlePlayerLeft(s, pl.GetName(), gameId)
 		case *pb.GameActivity_GameReadyToStart_:
-			err = s.callbacks.HandleGameReadyToStart(s, gameId)
+			err = s.gameCallbacks.HandleGameReadyToStart(s, gameId)
 		case *pb.GameActivity_GameStarted_:
-			err = s.callbacks.HandleGameStarted(s, gameId)
+			err = s.gameCallbacks.HandleGameStarted(s, gameId)
 		case *pb.GameActivity_YourTurn_:
-			err = s.callbacks.HandleYourTurn(s, gameId)
+			err = s.gameCallbacks.HandleYourTurn(s, gameId)
 		case *pb.GameActivity_TrickCompleted_:
 			tc := a.TrickCompleted
 			trick, err1 := cards.ParseCards(tc.GetTrick())
 			winningCard, err2 := cards.ParseCard(tc.GetWinningCard())
 			if err1 == nil && err2 == nil {
-				err = s.callbacks.HandleTrickCompleted(s, gameId, trick, winningCard, tc.GetWinnerId(), tc.GetWinnerName())
+				err = s.gameCallbacks.HandleTrickCompleted(s, gameId, trick, winningCard, tc.GetWinnerId(), tc.GetWinnerName())
 			}
 		case *pb.GameActivity_GameFinished_:
-			s.callbacks.HandleGameFinished(s, gameId)
+			s.gameCallbacks.HandleGameFinished(s, gameId)
 			break loop
 		case *pb.GameActivity_GameAborted_:
-			s.callbacks.HandleGameAborted(s, gameId)
+			s.gameCallbacks.HandleGameAborted(s, gameId)
 			break loop
 		}
 		if err != nil {
@@ -587,7 +591,7 @@ loop:
 	for {
 		activity, err := registryActivityStream.Recv()
 		if err != nil && isConnClosedErr(err) {
-			c.callbacks.HandleConnectionError(c, fmt.Errorf("Connection to server closed"))
+			c.registryCallbacks.HandleConnectionError(c, fmt.Errorf("Connection to server closed"))
 			break loop
 		}
 		if err != nil {
@@ -602,13 +606,13 @@ loop:
 			sessionIdChan <- sessionId
 		case *pb.RegistryActivity_GameCreated_:
 			gameId := a.GameCreated.GetGameId()
-			err = c.callbacks.HandleGameCreated(c, gameId)
+			err = c.registryCallbacks.HandleGameCreated(c, gameId)
 		case *pb.RegistryActivity_GameDeleted_:
 			gameId := a.GameDeleted.GetGameId()
-			err = c.callbacks.HandleGameDeleted(c, gameId)
+			err = c.registryCallbacks.HandleGameDeleted(c, gameId)
 		case *pb.RegistryActivity_FullGamesList_:
 			gameIds := a.FullGamesList.GetGameIds()
-			err = c.callbacks.HandleFullGamesList(c, gameIds)
+			err = c.registryCallbacks.HandleFullGamesList(c, gameIds)
 		}
 		if err != nil {
 			log.Printf("Error handling activity: %v\n", err)
@@ -618,14 +622,106 @@ loop:
 	wg.Done()
 }
 
-/*
 func newInProcessServer() pb.CardGameServiceClient {
 	return &inProcessServer{server: server.NewCardGameService()}
 }
+
 type inProcessServer struct {
 	server pb.CardGameServiceServer
 }
-func (s inProcessServer) Register(ctx context.Context, in *pb.RegisterRequest, opts ...grpc.CallOption) (*pb.RegisterResponse, error) {
-	return s.server.Register(ctx, in)
+
+func (s inProcessServer) Ping(ctx context.Context, in *pb.PingRequest, opts ...grpc.CallOption) (*pb.PingResponse, error) {
+	return s.server.Ping(ctx, in)
 }
-*/
+func (s inProcessServer) Register(ctx context.Context, in *pb.RegisterRequest, opts ...grpc.CallOption) (pb.CardGameService_RegisterClient, error) {
+	client, server := makeRegisterLocalConnectors()
+	go s.server.Register(in, server)
+	return client, nil
+}
+func (s inProcessServer) CreateGame(ctx context.Context, in *pb.CreateGameRequest, opts ...grpc.CallOption) (*pb.CreateGameResponse, error) {
+	return s.server.CreateGame(ctx, in)
+}
+func (s inProcessServer) ListGames(ctx context.Context, in *pb.ListGamesRequest, opts ...grpc.CallOption) (*pb.ListGamesResponse, error) {
+	return s.server.ListGames(ctx, in)
+}
+func (s inProcessServer) JoinGame(ctx context.Context, in *pb.JoinGameRequest, opts ...grpc.CallOption) (pb.CardGameService_JoinGameClient, error) {
+	client, server := makeObserveGameLocalConnectors()
+	go s.server.JoinGame(in, server)
+	return client, nil
+}
+func (s inProcessServer) ObserveGame(ctx context.Context, in *pb.ObserveGameRequest, opts ...grpc.CallOption) (pb.CardGameService_ObserveGameClient, error) {
+	client, server := makeObserveGameLocalConnectors()
+	go s.server.ObserveGame(in, server)
+	return client, nil
+}
+func (s inProcessServer) GameAction(ctx context.Context, in *pb.GameActionRequest, opts ...grpc.CallOption) (*pb.Status, error) {
+	return s.server.GameAction(ctx, in)
+}
+func (s inProcessServer) GetGameState(ctx context.Context, in *pb.GameStateRequest, opts ...grpc.CallOption) (*pb.GameState, error) {
+	return s.server.GetGameState(ctx, in)
+}
+
+func makeRegisterLocalConnectors() (pb.CardGameService_RegisterClient, pb.CardGameService_RegisterServer) {
+	ch := make(chan *pb.RegistryActivity)
+	client := &localRegistryActivityClient{ch: ch}
+	server := &localRegistryActivityServer{ch: ch, svrctx: context.Background()}
+	return client, server
+}
+
+type localRegistryActivityServer struct {
+	grpc.ServerStream
+	ch     chan *pb.RegistryActivity
+	svrctx context.Context
+}
+
+func (s localRegistryActivityServer) Send(ra *pb.RegistryActivity) error {
+	s.ch <- ra
+	return nil
+}
+
+func (s localRegistryActivityServer) Context() context.Context {
+	return s.svrctx
+}
+
+type localRegistryActivityClient struct {
+	grpc.ClientStream
+	ch chan *pb.RegistryActivity
+}
+
+func (c localRegistryActivityClient) Recv() (*pb.RegistryActivity, error) {
+	ra := <-c.ch
+	return ra, nil
+}
+
+// Works for both JoinGame and ObserveGame servers.
+func makeObserveGameLocalConnectors() (pb.CardGameService_ObserveGameClient, pb.CardGameService_ObserveGameServer) {
+	ch := make(chan *pb.GameActivity)
+	client := &localGameActivityClient{ch: ch}
+	server := &localGameActivityServer{ch: ch, svrctx: context.Background()}
+	return client, server
+}
+
+type localGameActivityServer struct {
+	grpc.ServerStream
+	ch     chan *pb.GameActivity
+	svrctx context.Context
+}
+
+func (s localGameActivityServer) Context() context.Context {
+	return s.svrctx
+}
+
+func (s localGameActivityServer) Send(ga *pb.GameActivity) error {
+	s.ch <- ga
+	return nil
+}
+
+type localGameActivityClient struct {
+	grpc.ClientStream
+	ch chan *pb.GameActivity
+}
+
+func (c localGameActivityClient) Recv() (*pb.GameActivity, error) {
+	ga := <-c.ch
+	return ga, nil
+}

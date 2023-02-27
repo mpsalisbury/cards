@@ -28,7 +28,7 @@ func main() {
 	}
 }
 func runPlayers() error {
-	conn, err := client.Connect(client.LocalServer, *verbose)
+	conn, err := client.Connect(client.InProcessServer, *verbose)
 	if err != nil {
 		return fmt.Errorf("couldn't connect to server: %v", err)
 	}
