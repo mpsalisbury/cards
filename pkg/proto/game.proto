@@ -6,13 +6,13 @@ option go_package = "/proto";
 
 service CardGameService {
     rpc Ping(PingRequest) returns (PingResponse);
-    rpc Register(RegisterRequest) returns (RegisterResponse);
+    rpc Register(RegisterRequest) returns (stream RegistryActivity);
+    rpc CreateGame(CreateGameRequest) returns (CreateGameResponse);
     rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
-    rpc JoinGame(JoinGameRequest) returns (JoinGameResponse);
+    rpc JoinGame(JoinGameRequest) returns (stream GameActivity);
+    rpc ObserveGame(ObserveGameRequest) returns (stream GameActivity);
     rpc GameAction(GameActionRequest) returns (Status);
     rpc GetGameState(GameStateRequest) returns (GameState);
-    rpc ListenForGameActivity(GameActivityRequest) returns (stream GameActivityResponse);
-    rpc ListenForRegistryActivity(RegistryActivityRequest) returns (stream RegistryActivityResponse);
 }
 
 message RegisterRequest {
@@ -22,9 +22,17 @@ message RegisterRequest {
 message RegisterResponse {
     // The is for the created session.
     // Use this id for all other requests for this session.
-    string player_id = 1;
+    string session_id = 1;
 }
 
+message CreateGameRequest { }
+message CreateGameResponse {
+    string game_id = 1;
+}
+message JoinGameRequest {
+    string session_id = 1;
+    string game_id = 2;
+}
 message ListGamesRequest {
     // Any of these phases. If no phase is listed, any phase is okay.
     repeated GameState.Phase phase = 1;
@@ -39,24 +47,14 @@ message ListGamesResponse {
     repeated GameSummary games = 1;
 }
 
-message JoinGameRequest {
-    enum Mode {
-        Unknown = 0;
-        AsPlayer = 1;
-        AsObserver = 2;
-    }
-    string player_id = 1;
+message ObserveGameRequest {
+    string session_id = 1;
     string game_id = 2;
-    Mode mode = 3;
-}
-
-message JoinGameResponse {
-    string game_id = 1;
 }
 
 message GameActionRequest {
-    string player_id = 1;
-// ??    string game_id = 2; 
+    string session_id = 1;
+    string game_id = 2;
     oneof type {
         ReadyToStartGameAction ready_to_start_game = 3;
         LeaveGameAction leave_game = 4;
@@ -70,12 +68,10 @@ message PlayCardAction {
     string card = 1;
 }
 
-
 message GameStateRequest {
-    oneof type {
-        string player_id = 1;
-        string game_id = 2;
-    }
+    // If session_id is present, returned game state will hide other players' cards.
+    string session_id = 1;
+    string game_id = 2;
 }
 
 message GameState{
@@ -112,30 +108,26 @@ message Status {
     string error = 2; // if code != 0
 }
 
-message GameActivityRequest {
-    string player_id = 1;
-}
+message GameActivity {
+    string game_id = 1;
 
-message GameActivityResponse {
     oneof type {
-        PlayerJoined player_joined = 1;
-        PlayerLeft player_left = 2;
-        GameReadyToStart game_ready_to_start = 3;
-        GameStarted game_started = 4;
-        CardPlayed card_played = 5;
-        TrickCompleted trick_completed = 6;
-        YourTurn your_turn = 7; // for player listener
-        GameFinished game_finished = 8;
-        GameAborted game_aborted = 9;
-        string broadcast_msg = 10;
+        PlayerJoined player_joined = 10;
+        PlayerLeft player_left = 11;
+        GameReadyToStart game_ready_to_start = 12;
+        GameStarted game_started = 13;
+        CardPlayed card_played = 14;
+        TrickCompleted trick_completed = 15;
+        YourTurn your_turn = 16; // for player listener
+        GameFinished game_finished = 17;
+        GameAborted game_aborted = 18;
+        string broadcast_msg = 19;
     }
     message PlayerJoined {
         string name = 1;
-        string game_id = 2;
     }
     message PlayerLeft {
         string name = 1;
-        string game_id = 2;
     }
     message GameReadyToStart {
     }
@@ -164,13 +156,15 @@ message PingResponse {
     string message = 1;
 }
 
-message RegistryActivityRequest { }
-
-message RegistryActivityResponse {
+message RegistryActivity {
     oneof type {
-        GameCreated game_created = 1;
-        GameDeleted game_deleted = 2;
-        FullGamesList full_games_list = 3;
+        SessionCreated session_created = 1;
+        GameCreated game_created = 2;
+        GameDeleted game_deleted = 3;
+        FullGamesList full_games_list = 4;
+    }
+    message SessionCreated {
+        string session_id = 1;
     }
     message GameCreated {
         string game_id = 1;

@@ -12,18 +12,16 @@ type Game interface {
 	Phase() GamePhase
 	GetLastActivityTime() time.Time
 	AcceptingMorePlayers() bool
-	AddPlayer(name, playerId string)
-	AddObserver(name, playerId string)
-	ListenerIds() []string
+	AddPlayer(name, sessionId string)
 	PlayerNames() []string
 	NextPlayerId() string
-	RemovePlayer(playerId string) error
+	RemovePlayer(sessionId string) error
 	IsEnoughPlayersToStart() bool
-	ConfirmPlayerReadyToStart(playerId string) error
+	ConfirmPlayerReadyToStart(sessionId string) error
 	UnconfirmedPlayerIds() []string
 	StartGame()
-	GetGameState(playerId string) (*pb.GameState, error)
-	HandlePlayCard(playerId string, card cards.Card, reporter Reporter) error
+	GetGameState(sessionId string) (*pb.GameState, error)
+	HandlePlayCard(sessionId string, card cards.Card, reporter Reporter) error
 	Abort()
 }
 

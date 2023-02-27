@@ -1,4 +1,4 @@
-package hearts
+package player
 
 import (
 	"context"
@@ -47,14 +47,14 @@ func qsWasPlayed(gs client.GameState) bool {
 	return anyPlayedCard(gs, func(c cards.Card) bool { return c == cards.Cqs })
 }
 
-func (c basicPlayer) HandleYourTurn(s client.Session) error {
+func (c basicPlayer) HandleYourTurn(s client.Session, gameId string) error {
 	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx)
+	gameState, err := s.GetGameState(ctx, gameId)
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	card := ChooseBasicStrategyCard(gameState)
-	err = s.PlayCard(ctx, card)
+	err = s.PlayCard(ctx, gameId, card)
 	if err != nil {
 		log.Fatalf("BasicPlayer chose invalid card %s\nGamestate: %v", card, gameState)
 	}

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mpsalisbury/cards/pkg/client"
-	"github.com/mpsalisbury/cards/pkg/game/hearts"
+	hearts "github.com/mpsalisbury/cards/pkg/game/hearts/player"
 )
 
 var (
@@ -25,20 +25,23 @@ func init() {
 }
 func main() {
 	flag.Parse()
-	err := RunPlayer()
+	err := runPlayer()
 	if err != nil {
 		log.Fatal(err)
 	}
 }
-func RunPlayer() error {
+func runPlayer() error {
 	conn, err := client.Connect(client.LocalServer, *verbose)
 	if err != nil {
 		return fmt.Errorf("couldn't connect to server: %v", err)
 	}
-	gameId := ""
+	gameId, err := conn.CreateGame(context.Background())
+	if err != nil {
+		return err
+	}
 	wg := new(sync.WaitGroup)
 	for i := 0; i < 3; i++ {
-		gameId, err = startAutoPlayer(conn, wg, gameId)
+		err = startAutoPlayer(conn, wg, gameId)
 		if err != nil {
 			return err
 		}
@@ -56,27 +59,26 @@ func RunPlayer() error {
 	return nil
 }
 
-func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) (string, error) {
+func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	player, err := hearts.NewPlayerFromFlag(playerType)
 	if err != nil {
-		return "", fmt.Errorf("couldn't create player: %v", err)
+		return fmt.Errorf("couldn't create player: %v", err)
 	}
 	return startPlayer(conn, wg, "", gameId, player)
 }
 func startCmdlinePlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
-	_, err := startPlayer(conn, wg, *name, gameId, hearts.NewTerminalPlayer())
-	return err
+	return startPlayer(conn, wg, *name, gameId, hearts.NewTerminalPlayer())
 }
-func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId string, callbacks client.GameCallbacks) (string, error) {
+func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId string, callbacks client.GameCallbacks) error {
 	ctx := context.Background()
 	session, err := conn.Register(ctx, name, callbacks)
 	if err != nil {
-		return "", fmt.Errorf("couldn't register with server: %v", err)
+		return fmt.Errorf("couldn't register with server: %v", err)
 	}
-	gameId, err = session.JoinGameAsPlayer(ctx, wg, gameId)
+	err = session.JoinGame(ctx, wg, gameId)
 	if err != nil {
-		return "", fmt.Errorf("couldn't join game: %v", err)
+		return fmt.Errorf("couldn't join game: %v", err)
 	}
 	wg.Add(1)
-	return gameId, nil
+	return nil
 }

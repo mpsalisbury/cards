@@ -12,13 +12,13 @@ import (
 	"github.com/mpsalisbury/cards/pkg/game"
 	"github.com/mpsalisbury/cards/pkg/game/hearts"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
+	"golang.org/x/exp/maps"
 )
 
 func NewCardGameService() pb.CardGameServiceServer {
 	cgs := &cardGameService{
-		players:           make(map[string]*playerSession),
-		games:             make(map[string]game.Game),
-		registryListeners: make(map[string]chan registryActivityReport),
+		players: make(map[string]*playerSession),
+		games:   make(map[string]*gameSession),
 	}
 	cgs.startGarbageCollector()
 	return cgs
@@ -26,19 +26,24 @@ func NewCardGameService() pb.CardGameServiceServer {
 
 type cardGameService struct {
 	pb.UnimplementedCardGameServiceServer
-	mu                sync.Mutex                             // Mutex for all data below
-	players           map[string]*playerSession              // Keyed by playerId
-	games             map[string]game.Game                   // Keyed by gameId
-	registryListeners map[string]chan registryActivityReport // Keyed by registryListenerId
+	mu      sync.Mutex                // Mutex for all data below
+	players map[string]*playerSession // Keyed by sessionId
+	games   map[string]*gameSession   // Keyed by gameId
 }
 
-type gameActivityReport = pb.GameActivityResponse_Type
+type gameActivityReport = pb.GameActivity_Type
+type registryActivityReport = pb.RegistryActivity_Type
+
+type gameSession struct {
+	game      game.Game
+	reportChs map[string]chan gameActivityReport // Keyed by sessionId
+}
 
 type playerSession struct {
-	id     string
-	name   string
-	gameId string
-	ch     chan gameActivityReport
+	id       string
+	name     string
+	gameIds  map[string]struct{} // All gameIds this player is participating in
+	reportCh chan registryActivityReport
 }
 
 func (s *cardGameService) startGarbageCollector() {
@@ -48,9 +53,9 @@ func (s *cardGameService) startGarbageCollector() {
 		for t := range ticker.C {
 			s.mu.Lock()
 			for _, g := range s.games {
-				if t.Sub(g.GetLastActivityTime()) > time.Hour {
-					log.Printf("Removing game %s due to inactivity", g.Id())
-					s.scheduleRemoveGame(g.Id(), time.Second)
+				if t.Sub(g.game.GetLastActivityTime()) > time.Hour {
+					log.Printf("Removing game %s due to inactivity", g.game.Id())
+					s.scheduleDeleteGame(g.game.Id(), time.Second)
 				}
 			}
 			s.mu.Unlock()
@@ -63,7 +68,7 @@ func (*cardGameService) Ping(ctx context.Context, request *pb.PingRequest) (*pb.
 	return &pb.PingResponse{Message: "Pong"}, nil
 }
 
-func (s *cardGameService) newPlayerId() string {
+func (s *cardGameService) newSessionId() string {
 	for {
 		id := fmt.Sprintf("p%04d", rand.Int31n(10000))
 		// Ensure no collision with existing player id.
@@ -72,15 +77,30 @@ func (s *cardGameService) newPlayerId() string {
 		}
 	}
 }
-func (s *cardGameService) addPlayer(name string) string {
-	playerId := s.newPlayerId()
+func (s *cardGameService) addPlayer(name string) *playerSession {
+	sessionId := s.newSessionId()
 	sess := &playerSession{
-		id:   playerId,
-		name: name,
+		id:       sessionId,
+		name:     name,
+		gameIds:  make(map[string]struct{}),
+		reportCh: make(chan registryActivityReport, 4),
 	}
-	s.players[playerId] = sess
-	log.Printf("Adding player %s\n", playerId)
-	return playerId
+	s.players[sessionId] = sess
+	log.Printf("Added player %s\n", sessionId)
+	return sess
+}
+func (s *cardGameService) deletePlayer(playerId string) error {
+	p, ok := s.players[playerId]
+	if !ok {
+		return fmt.Errorf("can't find player %s", playerId)
+	}
+	delete(s.players, playerId)
+	close(p.reportCh)
+	for gameId := range p.gameIds {
+		s.removePlayerFromGame(playerId, gameId)
+	}
+	log.Printf("Deleted player %s\n", playerId)
+	return nil
 }
 
 func (s *cardGameService) newGameId() string {
@@ -92,21 +112,26 @@ func (s *cardGameService) newGameId() string {
 		}
 	}
 }
-func (s *cardGameService) addGame() game.Game {
+func (s *cardGameService) addGame() *gameSession {
 	gameId := s.newGameId()
 	g := hearts.NewGame(gameId)
-	s.games[gameId] = g
-	s.ReportGameCreated(gameId)
-	return g
+	gs := &gameSession{
+		game:      g,
+		reportChs: make(map[string]chan gameActivityReport),
+	}
+	s.games[gameId] = gs
+	s.reportGameCreated(gameId)
+	return gs
 }
 
-func (s *cardGameService) removePlayer(playerId string) error {
-	log.Printf("Removing player %s\n", playerId)
+func (s *cardGameService) removePlayerFromGame(playerId, gameId string) error {
+	log.Printf("Removing player %s from game %s\n", playerId, gameId)
 	player, ok := s.players[playerId]
 	if !ok {
 		return fmt.Errorf("can't find player %s", playerId)
 	}
-	if g, found := s.games[player.gameId]; found {
+	if gs, found := s.games[gameId]; found {
+		g := gs.game
 		switch g.Phase() {
 		case game.Preparing:
 			err := g.RemovePlayer(playerId)
@@ -114,7 +139,8 @@ func (s *cardGameService) removePlayer(playerId string) error {
 				// Can't remove player, abort game
 				s.abortGame(g)
 			} else {
-				player.gameId = ""
+				delete(player.gameIds, gameId)
+				delete(gs.reportChs, playerId)
 				s.ReportPlayerLeft(g, player.name)
 				// How to stop listener here.
 			}
@@ -129,42 +155,62 @@ func (s *cardGameService) removePlayer(playerId string) error {
 func (s *cardGameService) abortGame(g game.Game) {
 	g.Abort()
 	s.ReportGameAborted(g)
-	s.scheduleRemoveGame(g.Id(), time.Second)
+	s.scheduleDeleteGame(g.Id(), time.Second)
 }
 
-func (s *cardGameService) scheduleRemoveGame(gameId string, when time.Duration) {
+func (s *cardGameService) scheduleDeleteGame(gameId string, when time.Duration) {
 	timer := time.NewTimer(when)
 	go func() {
 		<-timer.C
-		s.removeGame(gameId)
+		s.deleteGame(gameId)
 	}()
 }
-func (s *cardGameService) removeGame(gameId string) {
+func (s *cardGameService) deleteGame(gameId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	log.Printf("Deleting game %s\n", gameId)
-	delete(s.games, gameId)
-	s.ReportGameDeleted(gameId)
-	//	var playersToDelete []string
+	g, found := s.games[gameId]
+	if !found {
+		log.Printf("deleteGame: no such gameId %s", gameId)
+		return
+	}
 	// Disconnect players from deleted game.
-	for _, player := range s.players {
-		if player.gameId == gameId {
-			player.gameId = ""
-			//playersToDelete = append(playersToDelete, playerId)
+	for playerId, _ := range g.reportChs {
+		if player, ok := s.players[playerId]; ok {
+			delete(player.gameIds, gameId)
 		}
 	}
-	/*
-		for _, playerId := range playersToDelete {
-			delete(s.players, playerId)
-		}
-	*/
+	log.Printf("Deleting game %s\n", gameId)
+	delete(s.games, gameId)
+	s.reportGameDeleted(gameId)
 }
 
-func (s *cardGameService) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+func (s *cardGameService) Register(req *pb.RegisterRequest, resp pb.CardGameService_RegisterServer) error {
+	s.mu.Lock()
+	p := s.addPlayer(req.GetName())
+	ch := p.reportCh
+	ch <- makeReportSessionCreatedActivity(p.id)
+	ch <- makeFullGamesListActivity(maps.Keys(s.games))
+	s.mu.Unlock()
+	err := reportRegistryActivityToListener(p.reportCh, resp)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	playerId := s.addPlayer(req.GetName())
-	return &pb.RegisterResponse{PlayerId: playerId}, nil
+	s.deletePlayer(p.id)
+	return err
+}
+
+func makeReportSessionCreatedActivity(sessionId string) registryActivityReport {
+	return &pb.RegistryActivity_SessionCreated_{
+		SessionCreated: &pb.RegistryActivity_SessionCreated{
+			SessionId: sessionId,
+		},
+	}
+}
+func makeFullGamesListActivity(gameIds []string) registryActivityReport {
+	return &pb.RegistryActivity_FullGamesList_{
+		FullGamesList: &pb.RegistryActivity_FullGamesList{
+			GameIds: gameIds,
+		},
+	}
 }
 
 func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesRequest) (*pb.ListGamesResponse, error) {
@@ -172,12 +218,12 @@ func (s *cardGameService) ListGames(ctx context.Context, req *pb.ListGamesReques
 	defer s.mu.Unlock()
 	filter := makeGameFilter(req.GetPhase())
 	var games []*pb.ListGamesResponse_GameSummary
-	for _, g := range s.games {
-		if filter(g) {
+	for _, gs := range s.games {
+		if filter(gs.game) {
 			games = append(games, &pb.ListGamesResponse_GameSummary{
-				Id:          g.Id(),
-				Phase:       g.Phase().ToProto(),
-				PlayerNames: g.PlayerNames(),
+				Id:          gs.game.Id(),
+				Phase:       gs.game.Phase().ToProto(),
+				PlayerNames: gs.game.PlayerNames(),
 			})
 		}
 	}
@@ -201,45 +247,83 @@ func makeGameFilter(phases []pb.GameState_Phase) func(game.Game) bool {
 	}
 }
 
-func (s *cardGameService) JoinGame(ctx context.Context, req *pb.JoinGameRequest) (*pb.JoinGameResponse, error) {
+func (s *cardGameService) CreateGame(ctx context.Context, req *pb.CreateGameRequest) (*pb.CreateGameResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	playerId := req.GetPlayerId()
+	gs := s.addGame()
+	return &pb.CreateGameResponse{
+		GameId: gs.game.Id(),
+	}, nil
+}
+func (s *cardGameService) JoinGame(req *pb.JoinGameRequest, resp pb.CardGameService_JoinGameServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sessionId := req.GetSessionId()
 	gameId := req.GetGameId()
-	player, ok := s.players[playerId]
+	player, ok := s.players[sessionId]
 	if !ok {
-		return nil, fmt.Errorf("playerId %s not found", playerId)
+		return fmt.Errorf("sessionId %s not found", sessionId)
 	}
-	var g game.Game
-	if gameId == "" {
-		g = s.addGame()
-		gameId = g.Id()
-	} else {
-		g, ok = s.games[gameId]
-		if !ok {
-			return nil, fmt.Errorf("game %s not found", gameId)
-		}
+	gs, ok := s.games[gameId]
+	if !ok {
+		return fmt.Errorf("game %s not found", gameId)
 	}
-	player.gameId = gameId
-	if req.GetMode() == pb.JoinGameRequest_AsPlayer {
-		if !g.AcceptingMorePlayers() {
-			return nil, fmt.Errorf("game %s is full", gameId)
-		}
-		g.AddPlayer(player.name, player.id)
-		s.ReportPlayerJoined(g, player.name)
-		if g.IsEnoughPlayersToStart() {
-			go s.triggerStartWhenPlayersReady(g)
-		}
-		log.Printf("Player %s joined game %s", playerId, gameId)
+	g := gs.game
+	player.gameIds[gameId] = struct{}{}
+	if !g.AcceptingMorePlayers() {
+		return fmt.Errorf("game %s is full", gameId)
 	}
-	if req.GetMode() == pb.JoinGameRequest_AsObserver {
-		g.AddObserver(player.name, player.id)
-		log.Printf("Player %s observing game %s", playerId, gameId)
+	g.AddPlayer(player.name, player.id)
+	s.ReportPlayerJoined(g, player.name)
+	if g.IsEnoughPlayersToStart() {
+		go s.triggerStartWhenPlayersReady(gs)
 	}
-	return &pb.JoinGameResponse{GameId: gameId}, nil
+	log.Printf("Player %s joined game %s", sessionId, gameId)
+
+	ch := make(chan gameActivityReport, 4)
+	gs.reportChs[sessionId] = ch
+	s.mu.Unlock()
+	reportGameActivityToListener(gameId, ch, resp)
+	s.mu.Lock()
+	delete(gs.reportChs, sessionId)
+	close(ch)
+	// TODO: move this to when player listening activity channel is closed, not game.
+	s.handleLeaveGame(sessionId, gameId)
+	return nil
 }
 
-func (s *cardGameService) triggerStartWhenPlayersReady(g game.Game) {
+func (s *cardGameService) ObserveGame(req *pb.ObserveGameRequest, resp pb.CardGameService_ObserveGameServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sessionId := req.GetSessionId()
+	gameId := req.GetGameId()
+	player, ok := s.players[sessionId]
+	if !ok {
+		return fmt.Errorf("sessionId %s not found", sessionId)
+	}
+	var gs *gameSession
+	gs, ok = s.games[gameId]
+	if !ok {
+		return fmt.Errorf("game %s not found", gameId)
+	}
+	player.gameIds[gameId] = struct{}{}
+	log.Printf("Player %s observing game %s", sessionId, gameId)
+
+	// TODO: deduplicate this
+	ch := make(chan gameActivityReport, 4)
+	gs.reportChs[sessionId] = ch
+	s.mu.Unlock()
+	reportGameActivityToListener(gameId, ch, resp)
+	s.mu.Lock()
+	delete(gs.reportChs, sessionId)
+	close(ch)
+	// TODO: move this to when player listening activity channel is closed, not game.
+	s.handleLeaveGame(sessionId, gameId)
+	return nil
+}
+
+func (s *cardGameService) triggerStartWhenPlayersReady(gs *gameSession) {
+	g := gs.game
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	// Allow one minute for all players to be ready, or we'll abort this game.
@@ -249,9 +333,9 @@ func (s *cardGameService) triggerStartWhenPlayersReady(g game.Game) {
 		case <-ticker.C:
 			s.mu.Lock()
 			// log.Printf("Checking if players are ready for game %s\n", g.Id())
-			if len(g.UnconfirmedPlayerIds()) == 0 {
+			if len(gs.game.UnconfirmedPlayerIds()) == 0 {
 				log.Printf("Starting game %s\n", g.Id())
-				g.StartGame()
+				gs.game.StartGame()
 				s.ReportGameStarted(g)
 				s.ReportNextTurn(g)
 				s.mu.Unlock()
@@ -262,8 +346,8 @@ func (s *cardGameService) triggerStartWhenPlayersReady(g game.Game) {
 			s.mu.Unlock()
 		case <-doneTimer.C:
 			s.mu.Lock()
-			log.Printf("Game %s players not ready. Aborting.", g.Id())
-			g.Abort()
+			log.Printf("Game %s players not ready. Aborting.", gs.game.Id())
+			gs.game.Abort()
 			s.ReportGameAborted(g)
 			s.mu.Unlock()
 			return
@@ -274,16 +358,17 @@ func (s *cardGameService) triggerStartWhenPlayersReady(g game.Game) {
 func (s *cardGameService) GameAction(ctx context.Context, req *pb.GameActionRequest) (*pb.Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	playerId := req.GetPlayerId()
+	sessionId := req.GetSessionId()
+	gameId := req.GetGameId()
 	var err error
 	switch r := req.Type.(type) {
 	case *pb.GameActionRequest_ReadyToStartGame:
-		err = s.handleReadyToStartGame(playerId)
+		err = s.handleReadyToStartGame(sessionId, gameId)
 	case *pb.GameActionRequest_LeaveGame:
-		err = s.handleLeaveGame(playerId)
+		err = s.handleLeaveGame(sessionId, gameId)
 	case *pb.GameActionRequest_PlayCard:
 		card, _ := cards.ParseCard(r.PlayCard.GetCard())
-		err = s.handlePlayCard(playerId, card)
+		err = s.handlePlayCard(sessionId, gameId, card)
 	default:
 		return nil, fmt.Errorf("GameActionRequest has unexpected type %T", r)
 	}
@@ -293,32 +378,25 @@ func (s *cardGameService) GameAction(ctx context.Context, req *pb.GameActionRequ
 	return &pb.Status{Code: 0}, nil
 }
 
-func (s *cardGameService) handleReadyToStartGame(playerId string) error {
-	player, found := s.players[playerId]
+func (s *cardGameService) handleReadyToStartGame(sessionId, gameId string) error {
+	g, found := s.games[gameId]
 	if !found {
-		return fmt.Errorf("playerId %s not found", playerId)
+		return fmt.Errorf("no game %s found", gameId)
 	}
-	g, found := s.games[player.gameId]
-	if !found {
-		return fmt.Errorf("no game %s found for playerId %s", player.gameId, playerId)
-	}
-	return g.ConfirmPlayerReadyToStart(playerId)
+	return g.game.ConfirmPlayerReadyToStart(sessionId)
 }
 
-func (s *cardGameService) handleLeaveGame(playerId string) error {
-	return s.removePlayer(playerId)
+func (s *cardGameService) handleLeaveGame(sessionId, gameId string) error {
+	return s.removePlayerFromGame(sessionId, gameId)
 }
 
-func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error {
-	player, found := s.players[playerId]
+func (s *cardGameService) handlePlayCard(sessionId, gameId string, card cards.Card) error {
+	gs, found := s.games[gameId]
 	if !found {
-		return fmt.Errorf("playerId %s not found", playerId)
+		return fmt.Errorf("no game %s found", gameId)
 	}
-	g, found := s.games[player.gameId]
-	if !found {
-		return fmt.Errorf("no game %s found for playerId %s", player.gameId, playerId)
-	}
-	err := g.HandlePlayCard(playerId, card, s)
+	g := gs.game
+	err := g.HandlePlayCard(sessionId, card, s)
 	if err != nil {
 		return err
 	}
@@ -328,7 +406,7 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 		log.Printf("Game %s complete\n", g.Id())
 		s.ReportGameFinished(g)
 		// Clean this game up after folks have had a chance to check final state.
-		s.scheduleRemoveGame(g.Id(), 20*time.Second)
+		s.scheduleDeleteGame(g.Id(), 20*time.Second)
 	}
 	return nil
 }
@@ -336,110 +414,81 @@ func (s *cardGameService) handlePlayCard(playerId string, card cards.Card) error
 func (s *cardGameService) GetGameState(ctx context.Context, req *pb.GameStateRequest) (*pb.GameState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	gameId, playerId, err := func() (string, string, error) {
-		switch r := req.Type.(type) {
-		case *pb.GameStateRequest_GameId:
-			return r.GameId, "", nil
-		case *pb.GameStateRequest_PlayerId:
-			playerId := r.PlayerId
-			player, found := s.players[playerId]
-			if !found {
-				return "", "", fmt.Errorf("no player found for playerId %s", playerId)
-			}
-			return player.gameId, playerId, nil
-		default:
-			return "", "", fmt.Errorf("no value found for GameStateRequest.Type")
-		}
-	}()
-	if err != nil {
-		return nil, err
-	}
-	g, found := s.games[gameId]
+	sessionId := req.GetSessionId()
+	gameId := req.GetGameId()
+	gs, found := s.games[gameId]
 	if !found {
-		return nil, fmt.Errorf("no game found for playerId %s : %s", playerId, gameId)
+		return nil, fmt.Errorf("no game %s found", gameId)
 	}
-	return g.GetGameState(playerId)
-}
-
-func (s *cardGameService) ListenForGameActivity(req *pb.GameActivityRequest, resp pb.CardGameService_ListenForGameActivityServer) error {
-	s.mu.Lock()
-	playerId := req.GetPlayerId()
-	//log.Printf("ListenForGameActivity from %s - %s\n", playerId, s.players[playerId].name)
-	ch := make(chan gameActivityReport, 4)
-	s.players[playerId].ch = ch
-	s.mu.Unlock()
-	err := reportGameActivityToListener(ch, resp)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.players[playerId].ch = nil
-	close(ch)
-	// TODO: move this to when player listening activity channel is closed, not game.
-	s.handleLeaveGame(playerId)
-	return err
+	return gs.game.GetGameState(sessionId)
 }
 
 // Broadcasts message to all clients.
 func (s *cardGameService) BroadcastMessage(g game.Game, msg string) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_BroadcastMsg{BroadcastMsg: msg})
+		&pb.GameActivity_BroadcastMsg{BroadcastMsg: msg})
 }
 func (s *cardGameService) ReportPlayerJoined(g game.Game, name string) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_PlayerJoined_{
-			PlayerJoined: &pb.GameActivityResponse_PlayerJoined{Name: name, GameId: g.Id()},
+		&pb.GameActivity_PlayerJoined_{
+			PlayerJoined: &pb.GameActivity_PlayerJoined{Name: name},
 		})
 }
 func (s *cardGameService) ReportPlayerLeft(g game.Game, name string) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_PlayerLeft_{
-			PlayerLeft: &pb.GameActivityResponse_PlayerLeft{Name: name, GameId: g.Id()},
+		&pb.GameActivity_PlayerLeft_{
+			PlayerLeft: &pb.GameActivity_PlayerLeft{Name: name},
 		})
 }
 func (s *cardGameService) ReportGameReadyToStart(g game.Game) {
-	activity := &pb.GameActivityResponse_GameReadyToStart_{}
+	gs, ok := s.games[g.Id()]
+	if !ok {
+		log.Printf("ReportGameReadyToStart: no such gameId %s", g.Id())
+		return
+	}
+	activity := &pb.GameActivity_GameReadyToStart_{}
 	for _, pid := range g.UnconfirmedPlayerIds() {
-		p, ok := s.players[pid]
-		if ok && p.ch != nil {
-			p.ch <- activity
+		if ch, ok := gs.reportChs[pid]; ok {
+			ch <- activity
 		}
 	}
 }
 func (s *cardGameService) ReportGameStarted(g game.Game) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_GameStarted_{})
+		&pb.GameActivity_GameStarted_{})
 }
 func (s *cardGameService) ReportCardPlayed(g game.Game) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_CardPlayed_{})
+		&pb.GameActivity_CardPlayed_{})
 }
 func (s *cardGameService) ReportTrickCompleted(g game.Game, trick cards.Cards, trickWinnerId, trickWinnerName string) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_TrickCompleted_{
-			TrickCompleted: &pb.GameActivityResponse_TrickCompleted{
+		&pb.GameActivity_TrickCompleted_{
+			TrickCompleted: &pb.GameActivity_TrickCompleted{
 				Trick:           trick.Strings(),
 				TrickWinnerId:   trickWinnerId,
 				TrickWinnerName: trickWinnerName,
 			},
 		})
 }
-func (s *cardGameService) ReportGameCreated(gameId string) {
+func (s *cardGameService) reportGameCreated(gameId string) {
 	s.reportRegistryActivityToAll(
-		&pb.RegistryActivityResponse_GameCreated_{
-			GameCreated: &pb.RegistryActivityResponse_GameCreated{
+		&pb.RegistryActivity_GameCreated_{
+			GameCreated: &pb.RegistryActivity_GameCreated{
 				GameId: gameId,
 			},
 		})
 }
-func (s *cardGameService) ReportGameDeleted(gameId string) {
+func (s *cardGameService) reportGameDeleted(gameId string) {
 	s.reportRegistryActivityToAll(
-		&pb.RegistryActivityResponse_GameDeleted_{
-			GameDeleted: &pb.RegistryActivityResponse_GameDeleted{
+		&pb.RegistryActivity_GameDeleted_{
+			GameDeleted: &pb.RegistryActivity_GameDeleted{
 				GameId: gameId,
 			},
 		})
@@ -447,50 +496,55 @@ func (s *cardGameService) ReportGameDeleted(gameId string) {
 func (s *cardGameService) ReportGameFinished(g game.Game) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_GameFinished_{})
+		&pb.GameActivity_GameFinished_{})
 }
 func (s *cardGameService) ReportGameAborted(g game.Game) {
 	s.reportGameActivityToAll(
 		g,
-		&pb.GameActivityResponse_GameAborted_{})
+		&pb.GameActivity_GameAborted_{})
 }
 func (s *cardGameService) ReportNextTurn(g game.Game) {
+	gs, ok := s.games[g.Id()]
+	if !ok {
+		log.Printf("ReportNextTurn: no such gameId %s", g.Id())
+		return
+	}
 	pId := g.NextPlayerId()
-	sess, ok := s.players[pId]
+	ch, ok := gs.reportChs[pId]
 	if !ok {
 		log.Printf("No such playerId %s", pId)
 		return
 	}
-	yourTurn := &pb.GameActivityResponse_YourTurn_{}
-	sess.ch <- yourTurn
+	yourTurn := &pb.GameActivity_YourTurn_{}
+	ch <- yourTurn
 }
 func (s *cardGameService) reportGameActivityToAll(g game.Game, activity gameActivityReport) {
-	for _, pid := range g.ListenerIds() {
-		p, ok := s.players[pid]
-		if ok && p.ch != nil {
-			p.ch <- activity
+	if gs, ok := s.games[g.Id()]; ok {
+		for _, ch := range gs.reportChs {
+			ch <- activity
 		}
 	}
 }
 func (s *cardGameService) reportRegistryActivityToAll(activity registryActivityReport) {
-	for _, ch := range s.registryListeners {
-		ch <- activity
+	for _, p := range s.players {
+		p.reportCh <- activity
 	}
 }
 
-func reportGameActivityToListener(ch chan gameActivityReport, listener pb.CardGameService_ListenForGameActivityServer) error {
+// Handles both JoinGame and ObserveGame streams.
+func reportGameActivityToListener(gameId string, ch chan gameActivityReport, listener pb.CardGameService_ObserveGameServer) error {
 	for {
 		select {
 		case gameActivityType := <-ch:
-			activity := &pb.GameActivityResponse{Type: gameActivityType}
+			activity := &pb.GameActivity{GameId: gameId, Type: gameActivityType}
 			err := listener.Send(activity)
 			if err != nil {
 				return err
 			}
 			shouldStopListening := func() bool {
 				switch gameActivityType.(type) {
-				case *pb.GameActivityResponse_GameFinished_,
-					*pb.GameActivityResponse_GameAborted_:
+				case *pb.GameActivity_GameFinished_,
+					*pb.GameActivity_GameAborted_:
 					return true
 				default:
 					return false
@@ -506,42 +560,11 @@ func reportGameActivityToListener(ch chan gameActivityReport, listener pb.CardGa
 	}
 }
 
-type registryActivityReport = pb.RegistryActivityResponse_Type
-
-func (s *cardGameService) ListenForRegistryActivity(req *pb.RegistryActivityRequest, resp pb.CardGameService_ListenForRegistryActivityServer) error {
-	s.mu.Lock()
-	listenerKey := guid()
-	ch := make(chan registryActivityReport, 4)
-	s.registryListeners[listenerKey] = ch
-	log.Printf("Adding registry listener %s", listenerKey)
-	s.mu.Unlock()
-	go s.reportFullGameList(ch)
-	err := reportRegistryActivityToListener(ch, resp)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.registryListeners, listenerKey)
-	log.Printf("Dropping registry listener %s", listenerKey)
-	close(ch)
-	return err
-}
-func (s *cardGameService) reportFullGameList(ch chan registryActivityReport) {
-	var gameIds []string
-	for gid, _ := range s.games {
-		gameIds = append(gameIds, gid)
-	}
-	activity := &pb.RegistryActivityResponse_FullGamesList_{
-		FullGamesList: &pb.RegistryActivityResponse_FullGamesList{
-			GameIds: gameIds,
-		},
-	}
-	ch <- activity
-}
-
-func reportRegistryActivityToListener(ch chan registryActivityReport, listener pb.CardGameService_ListenForRegistryActivityServer) error {
+func reportRegistryActivityToListener(ch chan registryActivityReport, listener pb.CardGameService_RegisterServer) error {
 	for {
 		select {
 		case registryActivityType := <-ch:
-			activity := &pb.RegistryActivityResponse{Type: registryActivityType}
+			activity := &pb.RegistryActivity{Type: registryActivityType}
 			err := listener.Send(activity)
 			if err != nil {
 				return err
@@ -550,13 +573,4 @@ func reportRegistryActivityToListener(ch chan registryActivityReport, listener p
 			return listener.Context().Err()
 		}
 	}
-}
-
-func guid() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return fmt.Sprintf("%x", b)
 }

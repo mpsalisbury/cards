@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/mpsalisbury/cards/pkg/client"
-	"github.com/mpsalisbury/cards/pkg/game/hearts"
+	hearts "github.com/mpsalisbury/cards/pkg/game/hearts/player"
 )
 
 var (
@@ -56,13 +56,13 @@ func RunPlayer() error {
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	joinedGameId, err := session.JoinGameAsPlayer(ctx, wg, *gameId)
+	err = session.JoinGame(ctx, wg, *gameId)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Joined game %s\n", joinedGameId)
+	fmt.Printf("Joined game %s\n", *gameId)
 	wg.Wait()
-	fmt.Printf("Game %s finished\n", joinedGameId)
+	fmt.Printf("Game %s finished\n", *gameId)
 	return nil
 }
 
@@ -106,23 +106,23 @@ func (c callbacks) HandlePlayerLeft(s client.Session, name string, gameId string
 	return c.GameCallbacks.HandlePlayerLeft(s, name, gameId)
 }
 
-func (c callbacks) HandleGameStarted(s client.Session) error {
-	fmt.Printf("Game starting\n")
-	return c.GameCallbacks.HandleGameStarted(s)
+func (c callbacks) HandleGameStarted(s client.Session, gameId string) error {
+	fmt.Printf("Game %s starting\n", gameId)
+	return c.GameCallbacks.HandleGameStarted(s, gameId)
 }
-func (c callbacks) HandleGameFinished(s client.Session) {
-	fmt.Printf("Game over\n")
-	showGameState(s)
+func (c callbacks) HandleGameFinished(s client.Session, gameId string) {
+	fmt.Printf("Game %s over\n", gameId)
+	showGameState(s, gameId)
 }
-func (c callbacks) HandleGameAborted(s client.Session) {
-	fmt.Printf("Game aborted\n")
-	showGameState(s)
+func (c callbacks) HandleGameAborted(s client.Session, gameId string) {
+	fmt.Printf("Game %s aborted\n", gameId)
+	showGameState(s, gameId)
 }
 func (c callbacks) HandleConnectionError(s client.Session, err error) {
 	fmt.Printf("%v\n", err)
 }
-func showGameState(s client.Session) {
-	gameState, err := s.GetGameState(context.Background())
+func showGameState(s client.Session, gameId string) {
+	gameState, err := s.GetGameState(context.Background(), gameId)
 	if err != nil {
 		log.Fatalf("Couldn't get game state: %v", err)
 	}

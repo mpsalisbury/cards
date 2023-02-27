@@ -24,9 +24,8 @@ type heartsGame struct {
 	id               string
 	lastActivityTime time.Time
 	phase            game.GamePhase
-	players          map[string]*player // Keyed by playerId
-	playerOrder      []string           // by playerId
-	listenerIds      []string           // all players and observers
+	players          map[string]*player // Keyed by sessionId/playerId
+	playerOrder      []string           // by sessionId/playerId
 	numTricksPlayed  int
 	currentTrick     *trick
 	nextPlayerIndex  int // index into playerOrder
@@ -62,7 +61,7 @@ func (g heartsGame) PlayerNames() []string {
 
 type trick struct {
 	cards     cards.Cards
-	playerIds []string
+	playerIds []string // sessionIds of the players for the corresponding cards.
 }
 
 func (t *trick) size() int {
@@ -96,14 +95,6 @@ func (g *heartsGame) AddPlayer(name string, id string) {
 	p := &player{id: id, name: name}
 	g.players[id] = p
 	g.playerOrder = append(g.playerOrder, id)
-	g.listenerIds = append(g.listenerIds, id)
-}
-func (g *heartsGame) AddObserver(name string, id string) {
-	g.touch()
-	g.listenerIds = append(g.listenerIds, id)
-}
-func (g heartsGame) ListenerIds() []string {
-	return g.listenerIds
 }
 func (g heartsGame) containsPlayer(playerId string) bool {
 	_, ok := g.players[playerId]
@@ -117,7 +108,7 @@ func (g *heartsGame) RemovePlayer(playerId string) error {
 		return nil
 	}
 	if g.phase != game.Preparing {
-		return fmt.Errorf("can't remove player from game not in Preparing phase.")
+		return fmt.Errorf("can't remove player from game not in Preparing phase")
 	}
 	delete(g.players, playerId)
 	for i, s := range g.playerOrder {

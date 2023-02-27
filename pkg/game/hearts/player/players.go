@@ -1,4 +1,4 @@
-package hearts
+package player
 
 import (
 	"flag"

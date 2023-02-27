@@ -1,4 +1,4 @@
-package hearts
+package player
 
 import (
 	"context"
@@ -19,13 +19,13 @@ type terminalCallbacks struct {
 	client.UnimplementedGameCallbacks
 }
 
-func (c terminalCallbacks) HandleGameStarted(s client.Session) error {
+func (c terminalCallbacks) HandleGameStarted(s client.Session, gameId string) error {
 	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx)
+	gameState, err := s.GetGameState(ctx, gameId)
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}
-	myName, otherNames := c.playerNames(gameState, s.GetPlayerId())
+	myName, otherNames := c.playerNames(gameState, s.GetSessionId())
 	fmt.Printf("Welcome %s. Other players are %s.\n", myName, strings.Join(otherNames, ", "))
 	return nil
 }
@@ -41,20 +41,20 @@ func (terminalCallbacks) playerNames(gameState client.GameState, pid string) (pl
 	return
 }
 
-func (c terminalCallbacks) HandleTrickCompleted(s client.Session, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
+func (c terminalCallbacks) HandleTrickCompleted(s client.Session, gameId string, trick cards.Cards, trickWinnerId, trickWinnerName string) error {
 	fmt.Printf("Trick: %s won by %s\n\n", trick, trickWinnerName)
 	return nil
 }
 
-func (c terminalCallbacks) HandleYourTurn(s client.Session) error {
+func (c terminalCallbacks) HandleYourTurn(s client.Session, gameId string) error {
 	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx)
+	gameState, err := s.GetGameState(ctx, gameId)
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	for {
 		card := c.chooseCard(gameState)
-		if err := s.PlayCard(ctx, card); err == nil {
+		if err := s.PlayCard(ctx, gameId, card); err == nil {
 			return nil
 		}
 		fmt.Printf("Can't play card %s. Try again\n", card)

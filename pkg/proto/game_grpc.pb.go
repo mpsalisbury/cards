@@ -23,13 +23,14 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type CardGameServiceClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
-	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (CardGameService_RegisterClient, error)
+	//rpc Register(RegisterRequest) returns (RegisterResponse);
+	CreateGame(ctx context.Context, in *CreateGameRequest, opts ...grpc.CallOption) (*CreateGameResponse, error)
 	ListGames(ctx context.Context, in *ListGamesRequest, opts ...grpc.CallOption) (*ListGamesResponse, error)
-	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error)
+	JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (CardGameService_JoinGameClient, error)
+	ObserveGame(ctx context.Context, in *ObserveGameRequest, opts ...grpc.CallOption) (CardGameService_ObserveGameClient, error)
 	GameAction(ctx context.Context, in *GameActionRequest, opts ...grpc.CallOption) (*Status, error)
 	GetGameState(ctx context.Context, in *GameStateRequest, opts ...grpc.CallOption) (*GameState, error)
-	ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error)
-	ListenForRegistryActivity(ctx context.Context, in *RegistryActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForRegistryActivityClient, error)
 }
 
 type cardGameServiceClient struct {
@@ -49,9 +50,41 @@ func (c *cardGameServiceClient) Ping(ctx context.Context, in *PingRequest, opts 
 	return out, nil
 }
 
-func (c *cardGameServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
-	out := new(RegisterResponse)
-	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/Register", in, out, opts...)
+func (c *cardGameServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (CardGameService_RegisterClient, error) {
+	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[0], "/cards.proto.CardGameService/Register", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &cardGameServiceRegisterClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type CardGameService_RegisterClient interface {
+	Recv() (*RegistryActivity, error)
+	grpc.ClientStream
+}
+
+type cardGameServiceRegisterClient struct {
+	grpc.ClientStream
+}
+
+func (x *cardGameServiceRegisterClient) Recv() (*RegistryActivity, error) {
+	m := new(RegistryActivity)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *cardGameServiceClient) CreateGame(ctx context.Context, in *CreateGameRequest, opts ...grpc.CallOption) (*CreateGameResponse, error) {
+	out := new(CreateGameResponse)
+	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/CreateGame", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,13 +100,68 @@ func (c *cardGameServiceClient) ListGames(ctx context.Context, in *ListGamesRequ
 	return out, nil
 }
 
-func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (*JoinGameResponse, error) {
-	out := new(JoinGameResponse)
-	err := c.cc.Invoke(ctx, "/cards.proto.CardGameService/JoinGame", in, out, opts...)
+func (c *cardGameServiceClient) JoinGame(ctx context.Context, in *JoinGameRequest, opts ...grpc.CallOption) (CardGameService_JoinGameClient, error) {
+	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[1], "/cards.proto.CardGameService/JoinGame", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &cardGameServiceJoinGameClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type CardGameService_JoinGameClient interface {
+	Recv() (*GameActivity, error)
+	grpc.ClientStream
+}
+
+type cardGameServiceJoinGameClient struct {
+	grpc.ClientStream
+}
+
+func (x *cardGameServiceJoinGameClient) Recv() (*GameActivity, error) {
+	m := new(GameActivity)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *cardGameServiceClient) ObserveGame(ctx context.Context, in *ObserveGameRequest, opts ...grpc.CallOption) (CardGameService_ObserveGameClient, error) {
+	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[2], "/cards.proto.CardGameService/ObserveGame", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &cardGameServiceObserveGameClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type CardGameService_ObserveGameClient interface {
+	Recv() (*GameActivity, error)
+	grpc.ClientStream
+}
+
+type cardGameServiceObserveGameClient struct {
+	grpc.ClientStream
+}
+
+func (x *cardGameServiceObserveGameClient) Recv() (*GameActivity, error) {
+	m := new(GameActivity)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (c *cardGameServiceClient) GameAction(ctx context.Context, in *GameActionRequest, opts ...grpc.CallOption) (*Status, error) {
@@ -94,82 +182,19 @@ func (c *cardGameServiceClient) GetGameState(ctx context.Context, in *GameStateR
 	return out, nil
 }
 
-func (c *cardGameServiceClient) ListenForGameActivity(ctx context.Context, in *GameActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForGameActivityClient, error) {
-	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[0], "/cards.proto.CardGameService/ListenForGameActivity", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &cardGameServiceListenForGameActivityClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type CardGameService_ListenForGameActivityClient interface {
-	Recv() (*GameActivityResponse, error)
-	grpc.ClientStream
-}
-
-type cardGameServiceListenForGameActivityClient struct {
-	grpc.ClientStream
-}
-
-func (x *cardGameServiceListenForGameActivityClient) Recv() (*GameActivityResponse, error) {
-	m := new(GameActivityResponse)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *cardGameServiceClient) ListenForRegistryActivity(ctx context.Context, in *RegistryActivityRequest, opts ...grpc.CallOption) (CardGameService_ListenForRegistryActivityClient, error) {
-	stream, err := c.cc.NewStream(ctx, &CardGameService_ServiceDesc.Streams[1], "/cards.proto.CardGameService/ListenForRegistryActivity", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &cardGameServiceListenForRegistryActivityClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type CardGameService_ListenForRegistryActivityClient interface {
-	Recv() (*RegistryActivityResponse, error)
-	grpc.ClientStream
-}
-
-type cardGameServiceListenForRegistryActivityClient struct {
-	grpc.ClientStream
-}
-
-func (x *cardGameServiceListenForRegistryActivityClient) Recv() (*RegistryActivityResponse, error) {
-	m := new(RegistryActivityResponse)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 // CardGameServiceServer is the server API for CardGameService service.
 // All implementations must embed UnimplementedCardGameServiceServer
 // for forward compatibility
 type CardGameServiceServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	Register(*RegisterRequest, CardGameService_RegisterServer) error
+	//rpc Register(RegisterRequest) returns (RegisterResponse);
+	CreateGame(context.Context, *CreateGameRequest) (*CreateGameResponse, error)
 	ListGames(context.Context, *ListGamesRequest) (*ListGamesResponse, error)
-	JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error)
+	JoinGame(*JoinGameRequest, CardGameService_JoinGameServer) error
+	ObserveGame(*ObserveGameRequest, CardGameService_ObserveGameServer) error
 	GameAction(context.Context, *GameActionRequest) (*Status, error)
 	GetGameState(context.Context, *GameStateRequest) (*GameState, error)
-	ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error
-	ListenForRegistryActivity(*RegistryActivityRequest, CardGameService_ListenForRegistryActivityServer) error
 	mustEmbedUnimplementedCardGameServiceServer()
 }
 
@@ -180,26 +205,26 @@ type UnimplementedCardGameServiceServer struct {
 func (UnimplementedCardGameServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
-func (UnimplementedCardGameServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Register not implemented")
+func (UnimplementedCardGameServiceServer) Register(*RegisterRequest, CardGameService_RegisterServer) error {
+	return status.Errorf(codes.Unimplemented, "method Register not implemented")
+}
+func (UnimplementedCardGameServiceServer) CreateGame(context.Context, *CreateGameRequest) (*CreateGameResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateGame not implemented")
 }
 func (UnimplementedCardGameServiceServer) ListGames(context.Context, *ListGamesRequest) (*ListGamesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListGames not implemented")
 }
-func (UnimplementedCardGameServiceServer) JoinGame(context.Context, *JoinGameRequest) (*JoinGameResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
+func (UnimplementedCardGameServiceServer) JoinGame(*JoinGameRequest, CardGameService_JoinGameServer) error {
+	return status.Errorf(codes.Unimplemented, "method JoinGame not implemented")
+}
+func (UnimplementedCardGameServiceServer) ObserveGame(*ObserveGameRequest, CardGameService_ObserveGameServer) error {
+	return status.Errorf(codes.Unimplemented, "method ObserveGame not implemented")
 }
 func (UnimplementedCardGameServiceServer) GameAction(context.Context, *GameActionRequest) (*Status, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GameAction not implemented")
 }
 func (UnimplementedCardGameServiceServer) GetGameState(context.Context, *GameStateRequest) (*GameState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGameState not implemented")
-}
-func (UnimplementedCardGameServiceServer) ListenForGameActivity(*GameActivityRequest, CardGameService_ListenForGameActivityServer) error {
-	return status.Errorf(codes.Unimplemented, "method ListenForGameActivity not implemented")
-}
-func (UnimplementedCardGameServiceServer) ListenForRegistryActivity(*RegistryActivityRequest, CardGameService_ListenForRegistryActivityServer) error {
-	return status.Errorf(codes.Unimplemented, "method ListenForRegistryActivity not implemented")
 }
 func (UnimplementedCardGameServiceServer) mustEmbedUnimplementedCardGameServiceServer() {}
 
@@ -232,20 +257,41 @@ func _CardGameService_Ping_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CardGameService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRequest)
+func _CardGameService_Register_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(RegisterRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CardGameServiceServer).Register(m, &cardGameServiceRegisterServer{stream})
+}
+
+type CardGameService_RegisterServer interface {
+	Send(*RegistryActivity) error
+	grpc.ServerStream
+}
+
+type cardGameServiceRegisterServer struct {
+	grpc.ServerStream
+}
+
+func (x *cardGameServiceRegisterServer) Send(m *RegistryActivity) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _CardGameService_CreateGame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateGameRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CardGameServiceServer).Register(ctx, in)
+		return srv.(CardGameServiceServer).CreateGame(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/cards.proto.CardGameService/Register",
+		FullMethod: "/cards.proto.CardGameService/CreateGame",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CardGameServiceServer).Register(ctx, req.(*RegisterRequest))
+		return srv.(CardGameServiceServer).CreateGame(ctx, req.(*CreateGameRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -268,22 +314,46 @@ func _CardGameService_ListGames_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CardGameService_JoinGame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(JoinGameRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _CardGameService_JoinGame_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(JoinGameRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(CardGameServiceServer).JoinGame(ctx, in)
+	return srv.(CardGameServiceServer).JoinGame(m, &cardGameServiceJoinGameServer{stream})
+}
+
+type CardGameService_JoinGameServer interface {
+	Send(*GameActivity) error
+	grpc.ServerStream
+}
+
+type cardGameServiceJoinGameServer struct {
+	grpc.ServerStream
+}
+
+func (x *cardGameServiceJoinGameServer) Send(m *GameActivity) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _CardGameService_ObserveGame_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ObserveGameRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/cards.proto.CardGameService/JoinGame",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CardGameServiceServer).JoinGame(ctx, req.(*JoinGameRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(CardGameServiceServer).ObserveGame(m, &cardGameServiceObserveGameServer{stream})
+}
+
+type CardGameService_ObserveGameServer interface {
+	Send(*GameActivity) error
+	grpc.ServerStream
+}
+
+type cardGameServiceObserveGameServer struct {
+	grpc.ServerStream
+}
+
+func (x *cardGameServiceObserveGameServer) Send(m *GameActivity) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 func _CardGameService_GameAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -322,48 +392,6 @@ func _CardGameService_GetGameState_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _CardGameService_ListenForGameActivity_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(GameActivityRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(CardGameServiceServer).ListenForGameActivity(m, &cardGameServiceListenForGameActivityServer{stream})
-}
-
-type CardGameService_ListenForGameActivityServer interface {
-	Send(*GameActivityResponse) error
-	grpc.ServerStream
-}
-
-type cardGameServiceListenForGameActivityServer struct {
-	grpc.ServerStream
-}
-
-func (x *cardGameServiceListenForGameActivityServer) Send(m *GameActivityResponse) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _CardGameService_ListenForRegistryActivity_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(RegistryActivityRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(CardGameServiceServer).ListenForRegistryActivity(m, &cardGameServiceListenForRegistryActivityServer{stream})
-}
-
-type CardGameService_ListenForRegistryActivityServer interface {
-	Send(*RegistryActivityResponse) error
-	grpc.ServerStream
-}
-
-type cardGameServiceListenForRegistryActivityServer struct {
-	grpc.ServerStream
-}
-
-func (x *cardGameServiceListenForRegistryActivityServer) Send(m *RegistryActivityResponse) error {
-	return x.ServerStream.SendMsg(m)
-}
-
 // CardGameService_ServiceDesc is the grpc.ServiceDesc for CardGameService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -376,16 +404,12 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CardGameService_Ping_Handler,
 		},
 		{
-			MethodName: "Register",
-			Handler:    _CardGameService_Register_Handler,
+			MethodName: "CreateGame",
+			Handler:    _CardGameService_CreateGame_Handler,
 		},
 		{
 			MethodName: "ListGames",
 			Handler:    _CardGameService_ListGames_Handler,
-		},
-		{
-			MethodName: "JoinGame",
-			Handler:    _CardGameService_JoinGame_Handler,
 		},
 		{
 			MethodName: "GameAction",
@@ -398,13 +422,18 @@ var CardGameService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "ListenForGameActivity",
-			Handler:       _CardGameService_ListenForGameActivity_Handler,
+			StreamName:    "Register",
+			Handler:       _CardGameService_Register_Handler,
 			ServerStreams: true,
 		},
 		{
-			StreamName:    "ListenForRegistryActivity",
-			Handler:       _CardGameService_ListenForRegistryActivity_Handler,
+			StreamName:    "JoinGame",
+			Handler:       _CardGameService_JoinGame_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ObserveGame",
+			Handler:       _CardGameService_ObserveGame_Handler,
 			ServerStreams: true,
 		},
 	},

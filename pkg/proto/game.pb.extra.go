@@ -8,10 +8,10 @@ type GameActionRequest_Type interface {
 	isGameActionRequest_Type
 }
 
-type GameActivityResponse_Type interface {
-	isGameActivityResponse_Type
+type GameActivity_Type interface {
+	isGameActivity_Type
 }
 
-type RegistryActivityResponse_Type interface {
-	isRegistryActivityResponse_Type
+type RegistryActivity_Type interface {
+	isRegistryActivity_Type
 }

@@ -1,4 +1,4 @@
-package hearts
+package player
 
 import (
 	"context"
@@ -23,13 +23,13 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func (c randomPlayer) HandleYourTurn(s client.Session) error {
+func (c randomPlayer) HandleYourTurn(s client.Session, gameId string) error {
 	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx)
+	gameState, err := s.GetGameState(ctx, gameId)
 	if err != nil {
 		return fmt.Errorf("couldn't get game state: %v", err)
 	}
 	legalPlays := gameState.LegalPlays
 	card := legalPlays[rand.Intn(len(legalPlays))]
-	return s.PlayCard(ctx, card)
+	return s.PlayCard(ctx, gameId, card)
 }

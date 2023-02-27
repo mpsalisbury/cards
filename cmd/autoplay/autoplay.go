@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/mpsalisbury/cards/pkg/client"
-	"github.com/mpsalisbury/cards/pkg/game/hearts"
+	hearts "github.com/mpsalisbury/cards/pkg/game/hearts/player"
 )
 
 var (
@@ -22,21 +22,23 @@ func init() {
 
 func main() {
 	flag.Parse()
-	err := RunPlayers()
+	err := runPlayers()
 	if err != nil {
 		log.Fatal(err)
 	}
 }
-func RunPlayers() error {
+func runPlayers() error {
 	conn, err := client.Connect(client.LocalServer, *verbose)
 	if err != nil {
 		return fmt.Errorf("couldn't connect to server: %v", err)
 	}
-	gameId := ""
+	gameId, err := conn.CreateGame(context.Background())
+	if err != nil {
+		return err
+	}
 	wg := new(sync.WaitGroup)
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		gameId, err = startAutoPlayer(conn, wg, gameId)
+		err = startAutoPlayer(conn, wg, gameId)
 		if err != nil {
 			return err
 		}
@@ -50,19 +52,20 @@ func RunPlayers() error {
 	return nil
 }
 
-func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) (string, error) {
+func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	ctx := context.Background()
 	player, err := hearts.NewPlayerFromFlag(playerType)
 	if err != nil {
-		return "", fmt.Errorf("couldn't create player: %v", err)
+		return fmt.Errorf("couldn't create player: %v", err)
 	}
 	session, err := conn.Register(ctx, "", player)
 	if err != nil {
-		return "", fmt.Errorf("couldn't register with server: %v", err)
+		return fmt.Errorf("couldn't register with server: %v", err)
 	}
-	gameId, err = session.JoinGameAsPlayer(ctx, wg, gameId)
+	wg.Add(1)
+	err = session.JoinGame(ctx, wg, gameId)
 	if err != nil {
-		return "", fmt.Errorf("couldn't join game: %v", err)
+		return fmt.Errorf("couldn't join game: %v", err)
 	}
-	return gameId, nil
+	return nil
 }
