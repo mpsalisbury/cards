@@ -17,7 +17,7 @@ var (
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your player name")
 	playerType = "basic"
-	serverType = "local"
+	serverType = "lan"
 )
 
 func init() {

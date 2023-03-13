@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mpsalisbury/cards/pkg/cards"
+	"github.com/mpsalisbury/cards/pkg/discovery"
 	pb "github.com/mpsalisbury/cards/pkg/proto"
 	"github.com/mpsalisbury/cards/pkg/server"
 	"google.golang.org/grpc"
@@ -18,44 +20,39 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const hostedServer = "api.cards.salisburyclan.com:443"
-const localServer = "localhost:50051"
+const cloudServerAddr = "api.cards.salisburyclan.com:443"
+const localHostServerAddr = "localhost:50051"
 
-//const rawHostedServer = "cards-api-5g5wrbokbq-uw.a.run.app:443"
+//const rawCloudHostedServer = "cards-api-5g5wrbokbq-uw.a.run.app:443"
 
 type ServerType uint8
 
 const (
-	LocalServer ServerType = iota
-	HostedServer
+	LocalHostServer ServerType = iota
+	LanServer
+	CloudServer
 	InProcessServer
 )
 
 // Creates a flag for specifying the server type to use.
 func AddServerFlag(target *string, name string) {
-	EnumFlag(target, name, []string{"local", "hosted", "inprocess"}, "Type of server to use")
+	EnumFlag(target, name, []string{"local", "lan", "cloud", "inprocess"}, "Type of server to use")
 }
 
 // Constructs a player from a player flag value.
 func ServerTypeFromFlag(serverType string) (ServerType, error) {
 	switch serverType {
-	case "", "local":
-		return LocalServer, nil
-	case "hosted":
-		return HostedServer, nil
+	case "local":
+		return LocalHostServer, nil
+	case "", "lan":
+		return LanServer, nil
+	case "cloud":
+		return CloudServer, nil
 	case "inprocess":
 		return InProcessServer, nil
 	default:
-		return LocalServer, fmt.Errorf("invalid server type %s", serverType)
+		return LocalHostServer, fmt.Errorf("invalid server type %s", serverType)
 	}
-}
-
-var configs = map[ServerType]struct {
-	serverAddr string
-	secure     bool
-}{
-	LocalServer:  {localServer, false},
-	HostedServer: {hostedServer, true},
 }
 
 func Connect(stype ServerType, verbose bool) (Connection, error) {
@@ -68,19 +65,31 @@ func Connect(stype ServerType, verbose bool) (Connection, error) {
 
 func createClient(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
 	switch stype {
-	case LocalServer, HostedServer:
-		return connectToExternalServer(stype)
+	case LocalHostServer:
+		return connectToExternalServer(localHostServerAddr, false)
+	case LanServer:
+		lanServerAddrs, err := discovery.FindService(time.Second)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(lanServerAddrs) == 0 {
+			return nil, nil, errors.New("no HeartServer found on LAN")
+		}
+		if len(lanServerAddrs) > 1 {
+			log.Printf("WARNING: Found multiple HeartServers, choosing one (%v)", lanServerAddrs)
+		}
+		return connectToExternalServer(lanServerAddrs[0], false)
+	case CloudServer:
+		return connectToExternalServer(cloudServerAddr, true)
 	case InProcessServer:
 		return connectToInProcessServer()
 	}
 	return nil, nil, fmt.Errorf("server type %v not supported", stype)
 }
 
-func connectToExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
-	config := configs[stype]
-
+func connectToExternalServer(serverAddr string, secure bool) (*grpc.ClientConn, pb.CardGameServiceClient, error) {
 	cred := func() credentials.TransportCredentials {
-		if config.secure {
+		if secure {
 			return credentials.NewTLS(&tls.Config{
 				InsecureSkipVerify: false,
 			})
@@ -89,9 +98,9 @@ func connectToExternalServer(stype ServerType) (*grpc.ClientConn, pb.CardGameSer
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, config.serverAddr, grpc.WithTransportCredentials(cred), grpc.WithBlock())
+	conn, err := grpc.DialContext(ctx, serverAddr, grpc.WithTransportCredentials(cred), grpc.WithBlock())
 	if err != nil {
-		return nil, nil, fmt.Errorf("error connecting to server at %s: %v", config.serverAddr, err)
+		return nil, nil, fmt.Errorf("error connecting to server at %s: %v", serverAddr, err)
 	}
 	client := pb.NewCardGameServiceClient(conn)
 	return conn, client, nil

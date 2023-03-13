@@ -17,7 +17,7 @@ var (
 	all        = flag.Bool("all", false, "Observe all games")
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your observer name")
-	serverType = "local"
+	serverType = "lan"
 )
 
 func init() {
