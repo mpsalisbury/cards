@@ -3,7 +3,10 @@ package discovery
 import (
 	"log"
 	"net"
+	"sort"
 	"time"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/google/uuid"
 	ssdp "github.com/koron/go-ssdp"
@@ -40,6 +43,8 @@ func FindService(waitTime time.Duration) ([]string, error) {
 		}
 		locs = append(locs, svr.Location)
 	}
+	sort.Strings(locs)
+	locs = slices.Compact(locs)
 	return locs, nil
 }
 

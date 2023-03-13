@@ -16,6 +16,7 @@ var (
 	joinAny    = flag.Bool("joinany", false, "Join any available game")
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your player name")
+	hints      = flag.Bool("hints", false, "Provide gameplay hints")
 	playerType = "basic"
 	serverType = "lan"
 )
@@ -52,7 +53,7 @@ func runPlayer() error {
 		}
 	}
 	ctx := context.Background()
-	player, err := hearts.NewPlayerFromFlag(playerType)
+	player, err := hearts.NewPlayerFromFlag(playerType, *hints)
 	if err != nil {
 		return err
 	}

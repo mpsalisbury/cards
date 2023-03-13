@@ -16,6 +16,7 @@ import (
 var (
 	verbose    = flag.Bool("verbose", false, "Print extra information during the session")
 	name       = flag.String("name", "", "Your player name")
+	hints      = flag.Bool("hints", false, "Provide gameplay hints")
 	playerType = "basic"
 	serverType = "lan"
 )
@@ -66,14 +67,14 @@ func runPlayer() error {
 }
 
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
-	player, err := hearts.NewPlayerFromFlag(playerType)
+	player, err := hearts.NewPlayerFromFlag(playerType, *hints)
 	if err != nil {
 		return fmt.Errorf("couldn't create player: %w", err)
 	}
 	return startPlayer(conn, wg, "", gameId, player)
 }
 func startCmdlinePlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
-	return startPlayer(conn, wg, *name, gameId, hearts.NewTerminalPlayer())
+	return startPlayer(conn, wg, *name, gameId, hearts.NewTerminalPlayer(*hints))
 }
 func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId string, callbacks client.GameCallbacks) error {
 	ctx := context.Background()

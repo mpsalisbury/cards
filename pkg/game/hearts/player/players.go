@@ -12,12 +12,12 @@ func AddPlayerFlag(target *string, name string) {
 }
 
 // Constructs a player from a player flag value.
-func NewPlayerFromFlag(playerType string) (client.GameCallbacks, error) {
+func NewPlayerFromFlag(playerType string, hints bool) (client.GameCallbacks, error) {
 	switch playerType {
 	case "", "basic":
 		return NewBasicPlayer(), nil
 	case "term":
-		return NewTerminalPlayer(), nil
+		return NewTerminalPlayer(hints), nil
 	case "random":
 		return NewRandomPlayer(), nil
 	default:

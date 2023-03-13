@@ -11,12 +11,13 @@ import (
 
 // TerminalPlayer has user enter plays via terminal.
 
-func NewTerminalPlayer() client.GameCallbacks {
-	return &terminalCallbacks{}
+func NewTerminalPlayer(hints bool) client.GameCallbacks {
+	return &terminalCallbacks{hints: hints}
 }
 
 type terminalCallbacks struct {
 	client.UnimplementedGameCallbacks
+	hints bool
 }
 
 func (c terminalCallbacks) HandleGameStarted(s client.Session, gameId string) error {
@@ -65,10 +66,14 @@ func (c terminalCallbacks) chooseCard(gs client.GameState) cards.Card {
 	for {
 		recommended := ChooseBasicStrategyCard(gs)
 		fmt.Println(showGame(gs))
-		fmt.Printf("Enter card to play [%s]: ", recommended)
+		if c.hints {
+			fmt.Printf("Enter card to play [%s]: ", recommended)
+		} else {
+			fmt.Printf("Enter card to play: ")
+		}
 		var cs string
 		fmt.Scanln(&cs)
-		if cs == "" {
+		if cs == "" && c.hints {
 			return recommended
 		}
 		card, err := cards.ParseCard(cs)
