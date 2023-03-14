@@ -10,18 +10,14 @@ func NewBasicStrategy() PlayerStrategy {
 	return &basicStrategy{}
 }
 
+// Publicly expose basic strategy.
+func ChooseBasicStrategyCard(gs client.GameState) cards.Card {
+	return NewBasicStrategy().ChooseCardToPlay(gs)
+}
+
 type basicStrategy struct{}
 
 func (s basicStrategy) ChooseCardToPlay(gs client.GameState) cards.Card {
-	return chooseCardToPlay(gs)
-}
-
-// Publicly expose basic strategy.
-func ChooseBasicStrategyCard(gs client.GameState) cards.Card {
-	return chooseCardToPlay(gs)
-}
-
-func chooseCardToPlay(gs client.GameState) cards.Card {
 	legalPlays := gs.LegalPlays
 	trick := gs.CurrentTrick
 
