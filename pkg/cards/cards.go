@@ -133,12 +133,12 @@ func (cs Cards) Highest() Card {
 		return c1.Value > c2.Value
 	})
 }
-func GetExtremeHand(hands []Cards, better func(c1, c2 Cards) bool) Cards {
-	if len(hands) == 0 {
-		log.Fatal("Can't get extreme for empty list of hands")
+func GetExtremeCards(css []Cards, better func(c1, c2 Cards) bool) Cards {
+	if len(css) == 0 {
+		log.Fatal("Can't get extreme for empty list of Cards")
 	}
-	best := hands[0]
-	for _, c := range hands {
+	best := css[0]
+	for _, c := range css {
 		if better(c, best) {
 			best = c
 		}

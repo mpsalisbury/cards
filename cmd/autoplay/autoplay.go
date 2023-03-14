@@ -60,7 +60,7 @@ func runPlayers() error {
 
 func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	ctx := context.Background()
-	player, err := hearts.NewPlayerFromFlag(playerType)
+	player, err := hearts.NewPlayerFromFlag(playerType, false)
 	if err != nil {
 		return fmt.Errorf("couldn't create player: %w", err)
 	}
