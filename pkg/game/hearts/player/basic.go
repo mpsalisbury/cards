@@ -6,13 +6,13 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-func NewBasicStrategy() PlayerStrategy {
+func newBasicStrategy() PlayerStrategy {
 	return &basicStrategy{}
 }
 
 // Publicly expose basic strategy.
 func ChooseBasicStrategyCard(gs client.GameState) cards.Card {
-	return NewBasicStrategy().ChooseCardToPlay(gs)
+	return newBasicStrategy().ChooseCardToPlay(gs)
 }
 
 type basicStrategy struct{}

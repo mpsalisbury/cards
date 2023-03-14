@@ -15,9 +15,9 @@ func AddPlayerFlag(target *string, name string) {
 func NewPlayerFromFlag(playerType string, hints bool) (client.GameCallbacks, error) {
 	switch playerType {
 	case "", "basic":
-		return newStrategyPlayer(NewBasicStrategy()), nil
+		return newStrategyPlayer(newBasicStrategy()), nil
 	case "random":
-		return newStrategyPlayer(NewRandomStrategy()), nil
+		return newStrategyPlayer(newRandomStrategy()), nil
 	case "term":
 		return NewTerminalPlayer(hints), nil
 	default:

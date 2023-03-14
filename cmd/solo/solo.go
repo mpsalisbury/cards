@@ -53,7 +53,7 @@ func runPlayer() error {
 			return err
 		}
 	}
-	err = startCmdlinePlayer(conn, wg, gameId)
+	err = startTerminalPlayer(conn, wg, gameId)
 	if err != nil {
 		return err
 	}
@@ -73,12 +73,12 @@ func startAutoPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) 
 	}
 	return startPlayer(conn, wg, "", gameId, player)
 }
-func startCmdlinePlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
+func startTerminalPlayer(conn client.Connection, wg *sync.WaitGroup, gameId string) error {
 	return startPlayer(conn, wg, *name, gameId, hearts.NewTerminalPlayer(*hints))
 }
-func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId string, callbacks client.GameCallbacks) error {
+func startPlayer(conn client.Connection, wg *sync.WaitGroup, name string, gameId string, player client.GameCallbacks) error {
 	ctx := context.Background()
-	session, err := conn.Register(ctx, name, callbacks)
+	session, err := conn.Register(ctx, name, player)
 	if err != nil {
 		return fmt.Errorf("couldn't register with server: %w", err)
 	}

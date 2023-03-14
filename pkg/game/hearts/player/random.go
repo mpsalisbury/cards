@@ -8,9 +8,9 @@ import (
 	"github.com/mpsalisbury/cards/pkg/client"
 )
 
-// Plays a random card that is legal.
+// Plays a random (legal) card.
 
-func NewRandomStrategy() PlayerStrategy {
+func newRandomStrategy() PlayerStrategy {
 	return &randomStrategy{}
 }
 
