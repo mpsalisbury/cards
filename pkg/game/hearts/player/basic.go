@@ -1,64 +1,19 @@
 package player
 
 import (
-	"context"
-	"fmt"
-	"log"
-
 	"github.com/mpsalisbury/cards/pkg/cards"
 	"github.com/mpsalisbury/cards/pkg/client"
 	"golang.org/x/exp/maps"
 )
 
-// BasicPlayer implements simple basic strategy.
-
-func NewBasicPlayer() client.GameCallbacks {
-	return &basicPlayer{}
+func NewBasicStrategy() PlayerStrategy {
+	return &basicStrategy{}
 }
 
-type basicPlayer struct {
-	client.UnimplementedGameCallbacks
-}
+type basicStrategy struct{}
 
-func numTricksOfSuit(gs client.GameState, suit cards.Suit) int {
-	count := 0
-	for _, p := range gs.Players {
-		for _, t := range p.Tricks {
-			if t[0].Suit == suit {
-				count++
-			}
-		}
-	}
-	return count
-}
-func anyPlayedCard(gs client.GameState, cond func(cards.Card) bool) bool {
-	for _, p := range gs.Players {
-		for _, t := range p.Tricks {
-			for _, c := range t {
-				if cond(c) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-func qsNotYetPlayed(gs client.GameState) bool {
-	return !anyPlayedCard(gs, func(c cards.Card) bool { return c == cards.Cqs })
-}
-
-func (c basicPlayer) HandleYourTurn(s client.Session, gameId string) error {
-	ctx := context.Background()
-	gameState, err := s.GetGameState(ctx, gameId)
-	if err != nil {
-		return fmt.Errorf("couldn't get game state: %v", err)
-	}
-	card := chooseCardToPlay(gameState)
-	err = s.PlayCard(ctx, gameId, card)
-	if err != nil {
-		log.Fatalf("BasicPlayer chose invalid card %s\nGamestate: %v", card, gameState)
-	}
-	return nil
+func (s basicStrategy) ChooseCardToPlay(gs client.GameState) cards.Card {
+	return chooseCardToPlay(gs)
 }
 
 // Publicly expose basic strategy.
@@ -238,4 +193,31 @@ func chooseDumpCard(gs client.GameState) cards.Card {
 		return c1.Lowest().Value > c2.Lowest().Value
 	})
 	return suitWithHighestLowCard.Highest()
+}
+
+func numTricksOfSuit(gs client.GameState, suit cards.Suit) int {
+	count := 0
+	for _, p := range gs.Players {
+		for _, t := range p.Tricks {
+			if t[0].Suit == suit {
+				count++
+			}
+		}
+	}
+	return count
+}
+func anyPlayedCard(gs client.GameState, cond func(cards.Card) bool) bool {
+	for _, p := range gs.Players {
+		for _, t := range p.Tricks {
+			for _, c := range t {
+				if cond(c) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+func qsNotYetPlayed(gs client.GameState) bool {
+	return !anyPlayedCard(gs, func(c cards.Card) bool { return c == cards.Cqs })
 }
