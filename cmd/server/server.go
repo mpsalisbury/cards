@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -13,7 +14,12 @@ import (
 	"github.com/mpsalisbury/cards/pkg/server"
 )
 
+var (
+	advertise = flag.Bool("advertise", false, "Advertise service on LAN")
+)
+
 func main() {
+	flag.Parse()
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "50051"
@@ -26,9 +32,14 @@ func main() {
 		log.Fatalf("net.Listen: %v", err)
 	}
 
-	ad, err := discovery.AdvertiseService(listener.Addr().String())
-	if err != nil {
-		log.Fatalf("AdvertiseService: %v", err)
+	// TODO: Consider catching kill to stop advertiser & server.
+
+	if *advertise {
+		ad, err := discovery.AdvertiseService(listener.Addr().String())
+		if err != nil {
+			log.Fatalf("AdvertiseService: %v", err)
+		}
+		defer ad.Close()
 	}
 
 	grpcServer := grpc.NewServer()
@@ -36,5 +47,4 @@ func main() {
 	if err = grpcServer.Serve(listener); err != nil {
 		log.Fatal(err)
 	}
-	ad.Close()
 }
